@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # d2-webgpu — plan pełnej gry (port apps/d2d do przeglądarki)
 
-Status: v1 (2026-10-24), przed review. Autor: Claude (Opus 5.5).
+Status: v2 (2026-10-24), po review Gemini 3.8 Flash Medium + Claude Fable (sekcja "Review v1"). Autor: Claude (Opus 5.5).
 Podstawa: `docs/research/full-game-port.md` (analiza + probe), `docs/research/port-ts-rust-estimate.md` (odrzucony pełny port TS/Rust na teraz).
 
 ## Cel
@@ -67,3 +67,18 @@ Akty II–IV, questy (zakres upstreamu). **Done:** wejście do aktu II przez che
 - Łatki na szybko zmieniający się upstream: przypięty commit, łatki małe, skrypt sprawdza czy się nakładają.
 - JSPI tylko w Chromium do F4.
 - Rozmiar wasm (cały silnik + SDL3): mierzyć; `-O3` vs `-Oz` w F4.
+
+## Review v1 (2026-10-24)
+Przyjęte (przekazane do implementacji F0/F1):
+- Node nie ma WORKERFS → smoke F0 przez NODEFS, `-sENVIRONMENT=web,worker,node` (Gemini 1, Fable 10).
+- Klatki: nigdy transfer `HEAPU8.buffer`; pula 2 buforów ping-pong + skrzynka „frame wanted” (backpressure, ukryta karta); hook zastępuje pracę SDL (Gemini 2, Fable 4, 13).
+- IDBFS: `syncfs(true)` w `preRun` z run dependency przed `main`; debounce; flush po zapisie postaci (Gemini 3, 11; Fable 11).
+- Pętla: decyzja od razu — funkcja kroku przez `emscripten_set_main_loop_arg` w osobnym `wasm/full/main_web.cpp`, JSPI tylko jako tymczasowy fallback (Gemini 4, Fable 5, 12, 17). Zmienia decyzję 5 i przesuwa część F4 do F1.
+- `SDL_PushEvent` nie aktualizuje stanu klawiatury/myszy → własny stan w shimie + łatki wywołań (Fable 1); obejście `SDL_ConvertEventToRenderCoordinates` (Gemini 7); mapa klawiszy, `preventDefault`, blur → puszczenie klawiszy (Gemini 10, Fable 14).
+- WORKERFS: cache read-ahead blokami 1–4 MB od F1, pomiar plików/s (Gemini 5, Fable 3).
+- Pamięć mierzona już w F0/F1; `MAXIMUM_MEMORY=2GB` dopóki pomiar nie wymaga więcej (Gemini 9, Fable 2, 15).
+- Inwentarz wątków + stub `pthread_create` przerywający z komunikatem (Fable 8).
+- CI bez assetów: dry-run łatek, vitest skrzynki klatek i kolejki audio (Fable 9, Gemini 12).
+- Audio (F3): C++ autorytatywny dla stanu kanałów, rejestr głosów w JS, wsadowe aktualizacje co tick, `setTargetAtTime`, ścieżka pozycyjna; muzyka jako surowy WAV → `decodeAudioData` (Gemini 8, Fable 6–7).
+- F4: dzielenie `want_level`/DRLG na kawałki między tickami (Gemini 6). F5 Done: po jednym queście na akt (Fable 18).
+Odrzucone: OffscreenCanvas + WebGPU w workerze (Gemini 2, wariant) — na razie nie; renderer i oświetlenie zostają w głównym wątku, a przyszły etap 6 i tak potrzebuje draw listy z workera.
