@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Build wasm + web, bundle the Corresponding Source (GPL-3.0 §6d) next to the
-# app, and deploy web/dist to Cloudflare Pages. Usage: scripts/deploy.sh [branch]
+# app, and deploy web/dist as a Cloudflare Workers static-assets site. Usage: scripts/deploy.sh [branch]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 branch="${1:-main}"
@@ -20,4 +20,4 @@ git -C third_party/d2decomped archive HEAD | tar -x -C "$src/third_party/d2decom
 mkdir -p web/dist/source
 tar -czf "web/dist/source/${archive}" -C "$tmp" "d2-webgpu-${sha}"
 
-npx -y wrangler@4 pages deploy web/dist --project-name d2-webgpu --branch "$branch" --commit-hash "$sha" --commit-dirty=false
+npx -y wrangler@4 deploy --message "d2-webgpu ${sha} (${branch})"

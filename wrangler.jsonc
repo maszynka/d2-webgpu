@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Static assets only: web/dist (app + wasm + bundled source archive). No game data.
+{
+  "name": "d2-webgpu",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./web/dist", "not_found_handling": "single-page-application" }
+}

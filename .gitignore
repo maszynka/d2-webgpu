@@ -6,3 +6,4 @@ build-*/
 *.log
 .DS_Store
 web/public/d2core.*
+.wrangler/
