@@ -77,7 +77,7 @@ export function levelTypeDt1Files(lvlTypesTxt: string, typeId: number, mask: num
   if (row) {
     for (let i = 0; i < 32; i++) {
       const file = row[`File ${i + 1}`];
-      if (((mask >>> i) & 1) !== 0 && file && file !== '0') out.push(`data\\global\\tiles\\${file.replace(/\//g, '\\')}`);
+      if (((mask >>> i) & 1) !== 0 && file && file !== '0') out.push(`data\\global\\tiles\\${file.replace(/^[\\/]+/, '').replace(/\//g, '\\')}`);
     }
   }
   for (const f of ['Act1\\Outdoors\\Blank.dt1', 'Act1\\Barracks\\InvisWal.dt1', 'Act1\\Barracks\\Warp.dt1']) {

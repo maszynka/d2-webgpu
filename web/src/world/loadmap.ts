@@ -51,6 +51,8 @@ export async function loadMapData(src: MapSource, ds1Path: string): Promise<MapD
     try {
       const prest = presetDt1Mask(text(await src.readFile('data\\global\\excel\\LvlPrest.txt')), ds1Path);
       if (prest) {
+        out.missing.length = 0; // the DS1's own list was abandoned
+        out.failed.length = 0;
         const types = text(await src.readFile('data\\global\\excel\\LvlTypes.txt'));
         out.usedExcel = true;
         await loadDt1s(src, levelTypeDt1Files(types, prest.def, prest.mask), tiles, out);
