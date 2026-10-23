@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Paletted sprite pass writing the G-buffer (docs/lighting.md):
-//   0 index  r8uint  palette index after the colormap row (0 = nothing drawn)
-//   1 aux    r8uint  kind << 5 | normal slot
+//   0 index  r8uint  palette index after the colormap row (0 is a real colour; see aux)
+//   1 aux    r8uint  AUX_DRAWN | kind << AUX_KIND_SHIFT | normal slot (0 = nothing drawn)
 //   2 height r8uint  height of the pixel above the ground, px (ground position = (x, y + height))
 //   3 blend  rgba8unorm  premultiplied "over" accumulation of blended records (reset by opaque ones)
 // Opaque records write targets 0-2 and reset 3; blended records only touch 3 (the integer targets have
@@ -29,7 +29,7 @@ struct Instance {
   @location(1) pos: vec2i,      // world top-left
   @location(2) size: vec2u,     // drawn size
   @location(3) rows: vec2u,     // colormap row, palette row
-  @location(4) surf: vec2i,     // aux byte (kind << 5 | normal), anchor
+  @location(4) surf: vec2i,     // aux byte (AUX_DRAWN | kind << AUX_KIND_SHIFT | normal), anchor
 }
 
 struct VsOut {
@@ -128,14 +128,14 @@ fn fs(f: VsOut) -> FsOut {
   }
   let idx2 = textureLoad(colormaps, vec2u(idx, f.rows.x), 0).r;
   let aux_in = u32(f.surf.x);
-  let kind = (aux_in >> 5u) & 7u;
+  let kind = (aux_in >> AUX_KIND_SHIFT) & 7u;
   let p = vec2f(f.origin) + cell + vec2f(0.5);
-  let g = geometry(kind, aux_in & 31u, f32(f.surf.y), p, f32(f.origin.x), cell.x + 0.5, f32(f.size.x));
+  let g = geometry(kind, aux_in & AUX_NORMAL_MASK, f32(f.surf.y), p, f32(f.origin.x), cell.x + 0.5, f32(f.size.x));
 
   var o: FsOut;
   if (blend_mode == 0u) {
     o.index = idx2;
-    o.aux = (kind << 5u) | g.normal;
+    o.aux = AUX_DRAWN | (kind << AUX_KIND_SHIFT) | g.normal;
     o.height = u32(g.z + 0.5);
     o.blend = vec4f(0.0);
     return o;

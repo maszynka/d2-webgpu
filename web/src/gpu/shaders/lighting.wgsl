@@ -31,13 +31,14 @@ fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
 @fragment
 fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
   let ip = vec2u(frag.xy);
-  let idx = textureLoad(g_index, ip, 0).r;
+  // aux is cleared to 0; every drawn pixel has AUX_DRAWN set, so palette index 0 is a normal colour here.
+  let aux = textureLoad(g_aux, ip, 0).r;
   var base = BACKGROUND;
-  if (idx != 0u) {
-    let aux = textureLoad(g_aux, ip, 0).r;
+  if ((aux & AUX_DRAWN) != 0u) {
+    let idx = textureLoad(g_index, ip, 0).r;
     let z = f32(textureLoad(g_height, ip, 0).r);
     let world = floor(u_view.origin + frag.xy / u_view.zoom) + vec2f(0.5);
-    base = shade(idx, u32(u_view.pal_row), aux >> 5u, aux & 31u, world, z);
+    base = shade(idx, u32(u_view.pal_row), (aux >> AUX_KIND_SHIFT) & 7u, aux & AUX_NORMAL_MASK, world, z);
   }
   let b = textureLoad(g_blend, ip, 0);
   return vec4f(b.rgb + base * (1.0 - b.a), 1.0);

@@ -39,7 +39,8 @@ test('demo scene renders without console errors', async ({ page }) => {
 test('lighting modes render without WebGPU errors and change the picture', async ({ page }) => {
   const errors: string[] = [];
   page.on('console', (m) => {
-    if (m.type() === 'error' || m.type() === 'warning') errors.push(`${m.type()}: ${m.text()}`);
+    // errors always fail; warnings only when they look like WebGPU / validation / GPU problems
+    if (m.type() === 'error' || (m.type() === 'warning' && /WebGPU|validation|GPU/i.test(m.text()))) errors.push(`${m.type()}: ${m.text()}`);
   });
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 

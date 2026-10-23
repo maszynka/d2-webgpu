@@ -56,7 +56,8 @@ fn shade(idx: u32, pal_row: u32, kind: u32, normal: u32, s: vec2f, z: f32) -> ve
     return min(base * m, vec3f(1.0));
   }
   let level = clamp(dot(m, vec3f(0.299, 0.587, 0.114)), 0.0, 1.0);
-  let row = u32(round(mix(f32(u_light.head.w), f32(u_light.head.z), level)));
+  // floor(x + 0.5) = Math.round in lighting.ts (WGSL round() is half-to-even)
+  let row = u32(floor(mix(f32(u_light.head.w), f32(u_light.head.z), level) + 0.5));
   let idx2 = textureLoad(colormaps, vec2u(idx, row), 0).r;
   return textureLoad(palettes, vec2u(idx2, pal_row), 0).rgb;
 }

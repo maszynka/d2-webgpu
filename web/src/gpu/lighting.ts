@@ -6,7 +6,7 @@
 // g = (sx, sy + z). True 3D position (2:1 dimetric view, ground foreshortened by sin 30 = 1/2, height by cos 30):
 // P = (g.x, 2 * g.y, z / cos 30).
 
-import { NORMALS, NORMAL_COUNT, SurfaceKind, isLitKind } from './surface';
+import { AUX_DRAWN, AUX_KIND_SHIFT, AUX_NORMAL_MASK, NORMALS, NORMAL_COUNT, NormalSlot, SurfaceKind, isLitKind } from './surface';
 
 export const MAX_LIGHTS = 32;
 export const Y_STRETCH = 2;
@@ -76,13 +76,18 @@ export interface Rgb {
   b: number;
 }
 
+/** Normal LUT lookup; out-of-range slots clamp to the last slot, like `min(normal, NORMAL_COUNT - 1u)` in light.wgsl. */
+export function normalVector(slot: number): readonly [number, number, number] {
+  return NORMALS[Math.min(Math.max(0, Math.trunc(slot)), NORMAL_COUNT - 1)]!;
+}
+
 /** Light multiplier at a surface point: screen position (sx, sy), height z (px), normal LUT slot. */
 export function lightMultiplier(sx: number, sy: number, z: number, normal: number, lights: readonly Light[], ambient: LightingState['ambient']): Rgb {
   const a = ambientRgb(ambient);
   let r = a[0];
   let g = a[1];
   let b = a[2];
-  const n = NORMALS[normal] ?? NORMALS[0]!;
+  const n = normalVector(normal);
   const gy = sy + z;
   for (const l of lights.slice(0, MAX_LIGHTS)) {
     const dx = l.x - sx;
@@ -107,7 +112,65 @@ export function luma(m: Rgb): number {
 /** Colormap row for a light multiplier in the authentic mode (monochrome light level, quantised to a row). */
 export function authenticRow(m: Rgb, brightRow: number, darkRow: number): number {
   const t = Math.min(1, Math.max(0, luma(m)));
-  return Math.round(darkRow + (brightRow - darkRow) * t);
+  // floor(x + 0.5) == Math.round for x >= 0; light.wgsl uses the same form (WGSL round() is half-to-even)
+  return Math.floor(darkRow + (brightRow - darkRow) * t + 0.5);
+}
+
+// --- sprite-pass geometry (mirror of `geometry` in sprite.wgsl) -------------------------------------------------
+
+export interface PixelGeometry {
+  /** height above the ground, px, clamped to 0..255 (before the byte rounding of `heightByte`) */
+  z: number;
+  /** normal slot actually stored in aux (corner / round markers resolved) */
+  normal: number;
+}
+
+/**
+ * Per-pixel height and normal of a sprite pixel. (px, py) = world position of the pixel centre, `left` = sprite's left
+ * edge x, `width` = sprite width (the pixel's u inside the sprite is px - left). Walls assume the standard DT1 layout:
+ * the tile's top vertex is at left + 80 and the 160-wide ground diamond spans left..left + 160.
+ */
+export function pixelGeometry(kind: number, normal: number, anchor: number, px: number, py: number, left: number, width: number): PixelGeometry {
+  let z = 0;
+  let n = normal;
+  const topX = left + 80;
+  const wall = kind === SurfaceKind.WallSw || kind === SurfaceKind.WallSe || kind === SurfaceKind.WallBlended;
+  if (wall && (normal === NormalSlot.CornerNorth || normal === NormalSlot.CornerSouth)) {
+    const isLeft = px < topX;
+    if (normal === NormalSlot.CornerNorth) {
+      if (isLeft) {
+        n = NormalSlot.WallSe;
+        z = anchor + 40 - (px - left) * 0.5 - py;
+      } else {
+        n = NormalSlot.WallSw;
+        z = anchor + (px - topX) * 0.5 - py;
+      }
+    } else if (isLeft) {
+      n = NormalSlot.WallSw;
+      z = anchor + 40 + (px - left) * 0.5 - py;
+    } else {
+      n = NormalSlot.WallSe;
+      z = anchor + 80 - (px - topX) * 0.5 - py;
+    }
+  } else if (kind === SurfaceKind.WallSw || (kind === SurfaceKind.WallBlended && normal === NormalSlot.WallSw)) {
+    z = anchor + (px - left) * 0.5 - py;
+  } else if (kind === SurfaceKind.WallSe || (kind === SurfaceKind.WallBlended && normal === NormalSlot.WallSe)) {
+    z = anchor - (px - left) * 0.5 - py;
+  } else if (kind === SurfaceKind.WallTop || kind === SurfaceKind.WallBlended) {
+    z = anchor;
+  } else if (kind === SurfaceKind.Card || kind === SurfaceKind.CardEmissive) {
+    z = anchor - py;
+    if (normal === NormalSlot.CardRound) {
+      // tilt follows the pixel's x across the FULL sprite width
+      n = NormalSlot.CardTilt0 + Math.min(Math.floor(((px - left) / Math.max(width, 1)) * 8), 7);
+    }
+  }
+  return { z: Math.min(255, Math.max(0, z)), normal: n };
+}
+
+/** The height target byte the sprite pass writes (`u32(z + 0.5)`). */
+export function heightByte(z: number): number {
+  return Math.floor(z + 0.5);
 }
 
 export interface ShadeInput {
@@ -134,6 +197,18 @@ export function shadePixel(p: ShadeInput, s: LightingState, t: ShadeTables, colo
   if (s.mode === 'smooth') return { r: Math.min(1, base.r * m.r), g: Math.min(1, base.g * m.g), b: Math.min(1, base.b * m.b) };
   const row = authenticRow(m, s.brightRow ?? 0, s.darkRow ?? Math.max(0, colormapRows - 1));
   return t.palette(t.colormap(row, p.index));
+}
+
+/** Colour of an empty (cleared) G-buffer texel, mirrors BACKGROUND in lighting.wgsl. */
+export const BACKGROUND: Rgb = { r: 0.02, g: 0.02, b: 0.03 };
+
+/**
+ * One G-buffer texel -> colour (the opaque part of the lighting pass, mirrors `fs` in lighting.wgsl). `aux === 0` means
+ * nothing was drawn; any drawn pixel has AUX_DRAWN set, so palette index 0 is an ordinary colour.
+ */
+export function shadeGBufferTexel(index: number, aux: number, height: number, sx: number, sy: number, s: LightingState, t: ShadeTables, colormapRows: number): Rgb {
+  if ((aux & AUX_DRAWN) === 0) return BACKGROUND;
+  return shadePixel({ index, kind: (aux >> AUX_KIND_SHIFT) & 7, normal: aux & AUX_NORMAL_MASK, sx, sy, z: height }, s, t, colormapRows);
 }
 
 export { SurfaceKind };

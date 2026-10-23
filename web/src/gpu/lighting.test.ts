@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   LIGHT_PARAMS_BYTES,
   MAX_LIGHTS,
+  BACKGROUND,
   authenticRow,
+  heightByte,
+  normalVector,
+  shadeGBufferTexel,
   lightMultiplier,
   luma,
   packLightParams,
@@ -12,7 +16,7 @@ import {
   type LightingState,
   type ShadeTables,
 } from './lighting';
-import { NORMALS, NormalSlot, SurfaceKind } from './surface';
+import { NORMALS, NORMAL_COUNT, NormalSlot, SurfaceKind, packAux } from './surface';
 import { makeDemoColormaps, makeDemoPalette } from '../demo/palette';
 
 const light = (x: number, y: number, z = 40, radius = 400, intensity = 1): Light => ({ x, y, z, radius, color: [1, 1, 1], intensity });
@@ -25,13 +29,13 @@ describe('light buffer packing', () => {
     ];
     const buf = packLightParams({ mode: 'authentic', ambient: [0.1, 0.2, 0.3], lights }, 8);
     expect(buf.byteLength).toBe(LIGHT_PARAMS_BYTES);
-    expect(LIGHT_PARAMS_BYTES).toBe(16 + 16 + 32 * 16 + 32 * 32);
+    expect(LIGHT_PARAMS_BYTES).toBe(16 + 16 + NORMAL_COUNT * 16 + 32 * 32);
     const u = new Uint32Array(buf);
     const f = new Float32Array(buf);
     expect([...u.slice(0, 4)]).toEqual([2, 2, 0, 7]);
     expect([...f.slice(4, 7)].map((v) => +v.toFixed(3))).toEqual([0.1, 0.2, 0.3]);
     expect([...f.slice(8 + NormalSlot.WallSe * 4, 8 + NormalSlot.WallSe * 4 + 3)]).toEqual([...NORMALS[NormalSlot.WallSe]!].map(Math.fround));
-    const base = 8 + 32 * 4;
+    const base = 8 + NORMAL_COUNT * 4;
     expect([...f.slice(base, base + 8)]).toEqual([1, 2, 3, 4, 0.5, 0.25, 0.125, 2]);
     expect(f[base + 8]).toBe(9);
   });
@@ -147,5 +151,52 @@ describe('shadePixel (the lighting pass per pixel)', () => {
     const tinted = shadePixel(px(SurfaceKind.WallSe), { ...st('authentic'), lights: [{ ...light(60, 30, 30), color: [1, 0, 0] }] }, tables, 8);
     const white = shadePixel(px(SurfaceKind.WallSe), { ...st('authentic'), lights: [{ ...light(60, 30, 30), color: [0.299, 0.299, 0.299] }] }, tables, 8);
     expect(tinted).toEqual(white);
+  });
+});
+
+describe('rounding parity and normal fallback', () => {
+  it('authentic row quantisation rounds .5 up (floor(x + 0.5), as light.wgsl), not half-to-even', () => {
+    expect(authenticRow({ r: 0.5, g: 0.5, b: 0.5 }, 0, 1)).toBe(1); // 0.5 -> 1 (half-to-even would give 0)
+    expect(authenticRow({ r: 0.5, g: 0.5, b: 0.5 }, 0, 3)).toBe(2); // 1.5 -> 2
+    expect(authenticRow({ r: 0.5, g: 0.5, b: 0.5 }, 0, 5)).toBe(3); // 2.5 -> 3 (half-to-even would give 2)
+  });
+  it('height byte rounds .5 up', () => {
+    expect([0.5, 1.5, 2.5, 127.5, 254.4].map(heightByte)).toEqual([1, 2, 3, 128, 254]);
+  });
+  it('out-of-range normal slots clamp to the last slot (WGSL min(normal, NORMAL_COUNT - 1u))', () => {
+    expect(normalVector(NORMAL_COUNT)).toBe(NORMALS[NORMAL_COUNT - 1]);
+    expect(normalVector(999)).toBe(NORMALS[NORMAL_COUNT - 1]);
+    expect(normalVector(-3)).toBe(NORMALS[0]);
+    expect(normalVector(NormalSlot.WallSe)).toBe(NORMALS[NormalSlot.WallSe]);
+  });
+});
+
+describe('drawn vs. empty G-buffer texels (palette index 0 is a real colour)', () => {
+  const black = { r: 0, g: 0, b: 0 };
+  const tables: ShadeTables = {
+    palette: (i) => (i === 0 ? black : { r: 0.5, g: 0.5, b: 0.5 }),
+    colormap: (row, i) => (i === 7 ? 0 : i + row * 0), // colormap row maps index 7 -> 0 (true black), as real D2 colormaps do
+  };
+  const lit: LightingState = { mode: 'smooth', ambient: 0.5, lights: [] };
+  const shade = (index: number, aux: number, s: LightingState) => shadeGBufferTexel(index, aux, 0, 0, 0, s, tables, 8);
+
+  it('cleared aux (0) shows the background, whatever the index', () => {
+    for (const mode of ['off', 'smooth', 'authentic'] as const) expect(shade(0, 0, { ...lit, mode })).toEqual(BACKGROUND);
+  });
+  it('a drawn index-0 pixel shows palette[0], not the background, for every kind and mode', () => {
+    for (const mode of ['off', 'smooth', 'authentic'] as const) {
+      for (const kind of Object.values(SurfaceKind)) {
+        const out = shade(0, packAux(kind, NormalSlot.Up), { ...lit, mode });
+        expect(out).toEqual(black);
+        expect(out).not.toEqual(BACKGROUND);
+      }
+    }
+  });
+  it('unlit kind with normal 0 is drawn (aux != 0) and keeps its palette colour', () => {
+    expect(shade(5, packAux(SurfaceKind.Unlit, 0), lit)).toEqual({ r: 0.5, g: 0.5, b: 0.5 });
+  });
+  it('authentic: a colormap that maps to index 0 darkens to true black instead of vanishing', () => {
+    const out = shade(7, packAux(SurfaceKind.Floor, NormalSlot.Up), { mode: 'authentic', ambient: 0, lights: [] });
+    expect(out).toEqual(black);
   });
 });

@@ -72,6 +72,9 @@ export class Renderer {
   litPaletteRow = 0;
   lastLights = 0;
   private readonly uni = new Float32Array(8);
+  private readonly lightScratch = new ArrayBuffer(LIGHT_PARAMS_BYTES);
+  /** G-buffer MRT attachments, built once (the G-buffer has a fixed scene size, so there is no resize to react to) */
+  private readonly gAttachments: GPURenderPassColorAttachment[];
   private readonly viewUniform: GPUBuffer;
   private readonly spriteBind: GPUBindGroup;
   private readonly blitBind: GPUBindGroup;
@@ -134,6 +137,12 @@ export class Renderer {
     this.gHeight = gTex('g-height', INDEX_FORMAT);
     this.gBlend = gTex('g-blend', BLEND_FORMAT);
     this.gViews = [this.gIndex, this.gAux, this.gHeight, this.gBlend].map((t) => t.createView());
+    this.gAttachments = this.gViews.map((view) => ({
+      view,
+      clearValue: { r: 0, g: 0, b: 0, a: 0 },
+      loadOp: 'clear' as const,
+      storeOp: 'store' as const,
+    }));
     this.lightBuf = device.createBuffer({
       label: 'light-params',
       size: LIGHT_PARAMS_BYTES,
@@ -360,7 +369,7 @@ export class Renderer {
     const uni = this.uni;
     uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, this.litPaletteRow, 0, 0]);
     device.queue.writeBuffer(this.viewUniform, 0, uni);
-    device.queue.writeBuffer(this.lightBuf, 0, packLightParams(this.lighting, this.colormapRows));
+    device.queue.writeBuffer(this.lightBuf, 0, packLightParams(this.lighting, this.colormapRows, this.lightScratch));
     this.lastLights = Math.min(MAX_LIGHTS, this.lighting.lights.length);
 
     if (data.byteLength > 0) {
@@ -378,12 +387,7 @@ export class Renderer {
 
     const enc = device.createCommandEncoder();
     const scenePass = enc.beginRenderPass({
-      colorAttachments: this.gViews.map((view) => ({
-        view,
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        loadOp: 'clear' as const,
-        storeOp: 'store' as const,
-      })),
+      colorAttachments: this.gAttachments,
     });
     if (this.instanceBuf) {
       scenePass.setBindGroup(0, this.spriteBind);
