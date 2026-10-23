@@ -4,12 +4,14 @@ import { aboutInfo } from './about';
 import { ACT1_PALETTE, identityColormap, kindOfPath, selectMpqs } from './assets/mpq';
 import type { Palette } from './core/abi';
 import { CoreClient, type CoreStatus } from './core/loader';
-import { DemoScene } from './demo/scene';
+import { DEMO_AMBIENT, DemoScene } from './demo/scene';
 import { makeDemoColormaps, makeDemoPalette } from './demo/palette';
 import { hasWebGPU } from './gpu/device';
 import { DrawList } from './gpu/drawlist';
+import type { Light } from './gpu/lighting';
 import { Renderer, fitRect } from './gpu/renderer';
 import { switchScene } from './scene-switch';
+import { bindLightControls } from './ui/lightui';
 import { Panel } from './ui/panel';
 import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
@@ -18,7 +20,7 @@ import { MapScene } from './world/tilemap';
 
 declare global {
   interface Window {
-    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string };
+    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string; lighting?: { mode: string; ambient: number; lights: number } };
   }
 }
 
@@ -84,6 +86,7 @@ async function main(): Promise<void> {
   };
 
   installDemoTables();
+  const lightUi = bindLightControls('smooth', DEMO_AMBIENT);
   const list = new DrawList();
   const camera = new Camera(0, 0);
   let active: Active = { kind: 'demo', scene: new DemoScene(renderer) };
@@ -106,6 +109,7 @@ async function main(): Promise<void> {
     camera.y = c.y;
     camera.setZoom(1);
     state.mode = 'demo';
+    lightUi.set('smooth', DEMO_AMBIENT);
   };
 
   // WASM core (optional): falls back to demo mode without /d2core.js
@@ -159,6 +163,7 @@ async function main(): Promise<void> {
       camera.y = c.y;
       camera.setZoom(b.w > 0 ? Math.max(1, Math.floor(Math.min(renderer.sceneW / b.w, renderer.sceneH / b.h))) : 1);
       state.mode = 'view';
+      lightUi.set('off', 0.5);
       panel.setStatus(`${req.path}: ${dc6.directions} dir x ${dc6.framesPerDirection} frames, showing direction ${Math.min(req.direction, Math.max(0, dc6.directions - 1))}${req.mosaic ? ' (all frames)' : ''}`);
     },
     async onMap(path) {
@@ -187,6 +192,7 @@ async function main(): Promise<void> {
       camera.y = c.y;
       camera.setZoom(1);
       state.mode = 'map';
+      lightUi.set('off', 0.3);
       panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
     },
     onDemo: showDemo,
@@ -254,7 +260,14 @@ async function main(): Promise<void> {
       const o = camera.origin(renderer.sceneW, renderer.sceneH);
       active.map.fill(list, o.x, o.y, renderer.sceneW / camera.zoom, renderer.sceneH / camera.zoom);
     }
+    // Demo: scripted lights. Map / viewer: no light sources of their own yet, so one light follows the camera.
+    const lights: Light[] =
+      active.kind === 'demo'
+        ? active.scene.lights(t)
+        : [{ x: camera.x, y: camera.y + 40, z: 60, radius: 600, color: [1, 0.85, 0.6], intensity: 1.2 }];
+    renderer.setLighting({ mode: lightUi.mode, ambient: lightUi.ambient, lights });
     renderer.render(list, camera);
+    state.lighting = { mode: lightUi.mode, ambient: lightUi.ambient, lights: renderer.lastLights };
     state.frames++;
 
     fpsAcc += dt;
@@ -271,6 +284,7 @@ async function main(): Promise<void> {
         `core: ${cs ? (cs.mode === 'wasm' ? `wasm ${cs.version}` : `demo mode (${cs.reason})`) : 'loading...'}`,
         `scene: ${renderer.sceneW}x${renderer.sceneH}  zoom: ${camera.zoom}x`,
         `instances: ${renderer.lastInstances}  draws: ${renderer.lastDrawCalls}  fps: ${fps.toFixed(0)}`,
+        `lighting: ${lightUi.mode}  ambient: ${lightUi.ambient.toFixed(2)}  lights: ${renderer.lastLights}`,
       ].join('\n');
     }
     requestAnimationFrame(frame);

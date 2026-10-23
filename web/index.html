@@ -8,7 +8,7 @@
     <style>
       :root { color-scheme: dark; --bg: #0c0c0f; --fg: #d8d4c8; --dim: #8a867a; --acc: #c8a24a; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
-      body { display: grid; grid-template-rows: auto auto 1fr auto; }
+      body { display: grid; grid-template-rows: auto auto auto 1fr auto; }
       header { padding: 8px 16px; display: flex; gap: 16px; align-items: baseline; }
       header h1 { margin: 0; font-size: 16px; color: var(--acc); }
       header span { color: var(--dim); }
@@ -20,6 +20,9 @@
       #nogpu div { max-width: 40em; }
       #debug { position: absolute; top: 8px; right: 8px; background: rgb(0 0 0 / 0.7); padding: 8px 10px; font: 12px/1.35 ui-monospace, monospace; border-radius: 4px; max-width: 34em; white-space: pre-wrap; }
       #tools { padding: 4px 16px 8px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
+      #light-tools { padding: 4px 16px 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
+      #light-tools select, #light-tools input { font: inherit; color: var(--fg); background: #1a1a20; border: 1px solid #3a3a44; border-radius: 4px; padding: 3px 8px; }
+      #light-tools label { color: var(--dim); }
       #tools button, #tools input { font: inherit; color: var(--fg); background: #1a1a20; border: 1px solid #3a3a44; border-radius: 4px; padding: 3px 8px; }
       #tools button { cursor: pointer; }
       #tools button:hover:not(:disabled) { border-color: var(--acc); }
@@ -40,6 +43,16 @@
       <h1>d2-webgpu</h1>
       <span>Demo scene (synthetic data). Drag / arrows: pan, wheel or +/-: integer zoom.</span>
     </header>
+    <section id="light-tools" aria-label="Lighting">
+      <label>lighting
+        <select id="light-mode">
+          <option value="off">off</option>
+          <option value="smooth" selected>smooth</option>
+          <option value="authentic">authentic</option>
+        </select>
+      </label>
+      <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" value="0.16" /> <output id="ambient-val">0.16</output></label>
+    </section>
     <section id="tools" aria-label="Game files">
       <button id="pick" type="button">Open game folder&hellip;</button>
       <button id="regrant" type="button" hidden>Reconnect saved folder</button>

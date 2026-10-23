@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// WebGPU renderer, PLAN decision 5: paletted sprites -> offscreen rgba8unorm (native res) -> nearest blit.
+// WebGPU renderer, PLAN decision 5 + M6 G-buffer lighting (docs/lighting.md):
+// paletted sprites -> G-buffer (index/aux/height r8uint + blend layer) -> lighting pass -> scene rgba8unorm
+// (native res) -> nearest blit.
 
 import spriteWgsl from './shaders/sprite.wgsl?raw';
 import blitWgsl from './shaders/blit.wgsl?raw';
+import lightLib from './shaders/light.wgsl?raw';
+import lightingWgsl from './shaders/lighting.wgsl?raw';
+import { LIGHT_PARAMS_BYTES, MAX_LIGHTS, packLightParams, type LightingState } from './lighting';
+import { surfaceWgslConstants } from './surface';
 import { ShelfPacker, type AtlasRect } from './atlas';
 import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
@@ -23,6 +29,10 @@ export interface RendererOptions {
 }
 
 const SCENE_FORMAT: GPUTextureFormat = 'rgba8unorm';
+const INDEX_FORMAT: GPUTextureFormat = 'r8uint';
+const BLEND_FORMAT: GPUTextureFormat = 'rgba8unorm';
+const SHADER_PREFIX = surfaceWgslConstants(MAX_LIGHTS) + lightLib;
+const DEFAULT_LIGHTING: LightingState = { mode: 'off', ambient: 1, lights: [] };
 
 /** Compute the destination rect for fitting src into dst: integer scale when >= 1, else fractional fit. */
 export function fitRect(srcW: number, srcH: number, dstW: number, dstH: number): { x: number; y: number; w: number; h: number } {
@@ -48,6 +58,19 @@ export class Renderer {
   private readonly palettes: GPUTexture;
   private readonly scene: GPUTexture;
   private readonly sceneView: GPUTextureView;
+  private readonly gIndex: GPUTexture;
+  private readonly gAux: GPUTexture;
+  private readonly gHeight: GPUTexture;
+  private readonly gBlend: GPUTexture;
+  private readonly gViews: GPUTextureView[];
+  private readonly lightBuf: GPUBuffer;
+  private readonly lightingBind: GPUBindGroup;
+  private readonly lightingPipeline: GPURenderPipeline;
+  private lighting: LightingState = DEFAULT_LIGHTING;
+  private colormapRows = 1;
+  /** colormap-light-row + palette row used by the lighting pass for lit pixels */
+  litPaletteRow = 0;
+  lastLights = 0;
   private readonly uni = new Float32Array(8);
   private readonly viewUniform: GPUBuffer;
   private readonly spriteBind: GPUBindGroup;
@@ -99,18 +122,36 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.sceneView = this.scene.createView();
+    const gTex = (label: string, format: GPUTextureFormat): GPUTexture =>
+      device.createTexture({
+        label,
+        size: [this.sceneW, this.sceneH],
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+    this.gIndex = gTex('g-index', INDEX_FORMAT);
+    this.gAux = gTex('g-aux', INDEX_FORMAT);
+    this.gHeight = gTex('g-height', INDEX_FORMAT);
+    this.gBlend = gTex('g-blend', BLEND_FORMAT);
+    this.gViews = [this.gIndex, this.gAux, this.gHeight, this.gBlend].map((t) => t.createView());
+    this.lightBuf = device.createBuffer({
+      label: 'light-params',
+      size: LIGHT_PARAMS_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
     this.viewUniform = device.createBuffer({
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const spriteModule = device.createShaderModule({ label: 'sprite', code: spriteWgsl });
+    const spriteModule = device.createShaderModule({ label: 'sprite', code: SHADER_PREFIX + spriteWgsl });
     const spriteBgl = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
     const spriteLayout = device.createPipelineLayout({ bindGroupLayouts: [spriteBgl] });
@@ -121,22 +162,23 @@ export class Renderer {
         { binding: 1, resource: this.atlas.createView() },
         { binding: 2, resource: this.colormaps.createView() },
         { binding: 3, resource: this.palettes.createView() },
+        { binding: 4, resource: { buffer: this.lightBuf } },
       ],
     });
+    // Blended records accumulate premultiplied "over" colour in the blend layer (integer targets cannot blend):
+    // out = src.rgb * a (premultiplied) + dst * (1 - a); additive: src + dst with alpha 0.
+    const over: GPUBlendState = {
+      color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+      alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+    };
     const blends: Record<BlendMode, GPUBlendState | undefined> = {
       opaque: undefined,
-      alpha50: {
-        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-      },
+      alpha50: over,
       additive: {
         color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
         alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
       },
-      darken: {
-        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-      },
+      darken: over,
     };
     for (const mode of Object.keys(BLEND_ID) as BlendMode[]) {
       const blend = blends[mode];
@@ -157,6 +199,7 @@ export class Renderer {
                   { shaderLocation: 1, offset: 16, format: 'sint32x2' },
                   { shaderLocation: 2, offset: 24, format: 'uint32x2' },
                   { shaderLocation: 3, offset: 32, format: 'uint32x2' },
+                  { shaderLocation: 4, offset: 40, format: 'sint32x2' },
                 ],
               },
             ],
@@ -165,12 +208,53 @@ export class Renderer {
             module: spriteModule,
             entryPoint: 'fs',
             constants: { blend_mode: BLEND_ID[mode] },
-            targets: [blend ? { format: SCENE_FORMAT, blend } : { format: SCENE_FORMAT }],
+            // integer targets: no blend state allowed, so blended records mask them out entirely
+            targets: [
+              { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
+              { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
+              { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
+              blend ? { format: BLEND_FORMAT, blend } : { format: BLEND_FORMAT },
+            ],
           },
           primitive: { topology: 'triangle-list' },
         }),
       );
     }
+
+    const lightingModule = device.createShaderModule({ label: 'lighting', code: SHADER_PREFIX + lightingWgsl });
+    const uintTex = { sampleType: 'uint' } as const;
+    const lightingBgl = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: uintTex },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: uintTex },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: uintTex },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: uintTex },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+      ],
+    });
+    this.lightingPipeline = device.createRenderPipeline({
+      label: 'lighting',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [lightingBgl] }),
+      vertex: { module: lightingModule, entryPoint: 'vs' },
+      fragment: { module: lightingModule, entryPoint: 'fs', targets: [{ format: SCENE_FORMAT }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.lightingBind = device.createBindGroup({
+      layout: lightingBgl,
+      entries: [
+        { binding: 0, resource: { buffer: this.viewUniform } },
+        { binding: 1, resource: { buffer: this.lightBuf } },
+        { binding: 2, resource: this.gViews[0]! },
+        { binding: 3, resource: this.gViews[1]! },
+        { binding: 4, resource: this.gViews[2]! },
+        { binding: 5, resource: this.gViews[3]! },
+        { binding: 6, resource: this.colormaps.createView() },
+        { binding: 7, resource: this.palettes.createView() },
+      ],
+    });
 
     const blitModule = device.createShaderModule({ label: 'blit', code: blitWgsl });
     const blitBgl = device.createBindGroupLayout({
@@ -230,6 +314,7 @@ export class Renderer {
   /** 256-row colormaps: `rows` rows of 256 bytes. */
   setColormaps(data: Uint8Array, rows: number): void {
     if (rows > COLORMAP_ROWS_MAX) throw new Error('too many colormap rows');
+    this.colormapRows = Math.max(1, rows);
     this.device.queue.writeTexture(
       { texture: this.colormaps },
       data as Uint8Array<ArrayBuffer>,
@@ -247,6 +332,11 @@ export class Renderer {
       { bytesPerRow: 256 * 4, rowsPerImage: rows },
       [256, rows],
     );
+  }
+
+  /** Lighting for the next frames (mode, ambient, point lights). Lights beyond MAX_LIGHTS are ignored. */
+  setLighting(l: LightingState): void {
+    this.lighting = l;
   }
 
   /** Match canvas backing store to its CSS size. */
@@ -268,8 +358,10 @@ export class Renderer {
 
     const o = camera.origin(this.sceneW, this.sceneH);
     const uni = this.uni;
-    uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, 0, 0, 0]);
+    uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, this.litPaletteRow, 0, 0]);
     device.queue.writeBuffer(this.viewUniform, 0, uni);
+    device.queue.writeBuffer(this.lightBuf, 0, packLightParams(this.lighting, this.colormapRows));
+    this.lastLights = Math.min(MAX_LIGHTS, this.lighting.lights.length);
 
     if (data.byteLength > 0) {
       if (!this.instanceBuf || this.instanceCap < data.byteLength) {
@@ -286,14 +378,12 @@ export class Renderer {
 
     const enc = device.createCommandEncoder();
     const scenePass = enc.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.sceneView,
-          clearValue: { r: 0.02, g: 0.02, b: 0.03, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
+      colorAttachments: this.gViews.map((view) => ({
+        view,
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        loadOp: 'clear' as const,
+        storeOp: 'store' as const,
+      })),
     });
     if (this.instanceBuf) {
       scenePass.setBindGroup(0, this.spriteBind);
@@ -306,6 +396,14 @@ export class Renderer {
       }
     }
     scenePass.end();
+
+    const lightPass = enc.beginRenderPass({
+      colorAttachments: [{ view: this.sceneView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+    });
+    lightPass.setPipeline(this.lightingPipeline);
+    lightPass.setBindGroup(0, this.lightingBind);
+    lightPass.draw(3);
+    lightPass.end();
 
     this.resizeToDisplay();
     const cw = this.canvas.width;
