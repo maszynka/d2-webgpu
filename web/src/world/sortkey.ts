@@ -100,8 +100,13 @@ export function compareKeys(a: bigint, b: bigint): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Key for a tile-bound object (floor / wall / roof). */
+/**
+ * Key for a tile-bound object (floor / wall / roof).
+ * Floors (like upstream's separate floor pass) all draw before any shadow/wall/unit/roof: they get diag 0 and keep
+ * their own diagonal order in the subtileDepth field (clamped to the field range).
+ */
 export function tileKey(tx: number, ty: number, layer: Layer, orientation: Orientation | number, seq: number): bigint {
+  if (layer === Layer.Floor) return packSortKey({ diag: 0, layer, subtileDepth: Math.min(1023, tx + ty), orientation, seq });
   return packSortKey({ diag: tx + ty, layer, subtileDepth: 0, orientation, seq });
 }
 

@@ -9,6 +9,7 @@ import { makeDemoColormaps, makeDemoPalette } from './demo/palette';
 import { hasWebGPU } from './gpu/device';
 import { DrawList } from './gpu/drawlist';
 import { Renderer, fitRect } from './gpu/renderer';
+import { switchScene } from './scene-switch';
 import { Panel } from './ui/panel';
 import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
@@ -142,9 +143,14 @@ async function main(): Promise<void> {
         palettes.set(req.palette, pal);
       }
       const dc6 = await core.loadDc6(req.path);
-      renderer.resetAtlas();
-      installGameTables(pal);
-      const viewer = new Dc6Viewer(renderer, dc6, req.direction, 0, 0);
+      const viewer = switchScene(
+        () => renderer.resetAtlas(),
+        () => {
+          installGameTables(pal);
+          return new Dc6Viewer(renderer, dc6, req.direction, 0, 0);
+        },
+        showDemo,
+      );
       viewer.mosaic = req.mosaic;
       active = { kind: 'view', viewer };
       const b = viewer.bounds();
@@ -160,21 +166,28 @@ async function main(): Promise<void> {
       if (!actPalette) throw new Error('Act 1 palette is not loaded.');
       panel.setStatus(`Loading ${path}...`);
       const data = await loadMapData(core, path);
-      renderer.resetAtlas();
-      installGameTables(actPalette);
-      const map = new MapScene(data.ds1, data.tiles, renderer, { paletteRow: 0, colormapRow: 0 });
+      const pal = actPalette;
+      const map = switchScene(
+        () => renderer.resetAtlas(),
+        () => {
+          installGameTables(pal);
+          return new MapScene(data.ds1, data.tiles, renderer, { paletteRow: 0, colormapRow: 0 });
+        },
+        showDemo,
+      );
       const st = map.stats;
       const info =
         `${path}: ${data.ds1.width}x${data.ds1.height}, ${data.loaded.length} DT1 (${data.tiles.size} tiles)${data.usedExcel ? ' via LvlTypes' : ''}; ` +
         `${st.floors} floors, ${st.walls} walls, ${st.roofs} roofs, ${st.shadows} shadows; ${st.missing.size} tile kinds missing` +
-        (data.missing.length ? `; ${data.missing.length} DT1 not found` : '');
+        (data.missing.length ? `; ${data.missing.length} DT1 not found` : '') +
+        (st.atlasFull > 0 ? `; ATLAS FULL: ${st.atlasFull} tile graphics could not be uploaded (GPU texture limit ${renderer.atlasSize}px), the map is incomplete` : '');
       active = { kind: 'map', map, info };
       const c = map.center();
       camera.x = c.x;
       camera.y = c.y;
       camera.setZoom(1);
       state.mode = 'map';
-      panel.setStatus(info, map.sprites.length === 0);
+      panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
     },
     onDemo: showDemo,
   });

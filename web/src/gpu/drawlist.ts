@@ -34,6 +34,9 @@ export const INSTANCE_BYTES = INSTANCE_WORDS * 4;
 
 export class DrawList {
   private records: DrawRecord[] = [];
+  // reused across frames: insertion indices (stable tie-break) and the sorted output
+  private idx: number[] = [];
+  private out: DrawRecord[] = [];
 
   get length(): number {
     return this.records.length;
@@ -49,10 +52,19 @@ export class DrawList {
 
   /** Stable sort by key ascending (insertion order breaks exact ties). */
   sorted(): DrawRecord[] {
-    return this.records
-      .map((r, i) => ({ r, i }))
-      .sort((a, b) => (a.r.sortKey < b.r.sortKey ? -1 : a.r.sortKey > b.r.sortKey ? 1 : a.i - b.i))
-      .map((e) => e.r);
+    const rec = this.records;
+    const idx = this.idx;
+    const out = this.out;
+    idx.length = rec.length;
+    for (let i = 0; i < rec.length; i++) idx[i] = i;
+    idx.sort((a, b) => {
+      const ka = rec[a]!.sortKey;
+      const kb = rec[b]!.sortKey;
+      return ka < kb ? -1 : ka > kb ? 1 : a - b;
+    });
+    out.length = rec.length;
+    for (let i = 0; i < idx.length; i++) out[i] = rec[idx[i]!]!;
+    return out; // owned by the list; valid until the next sorted()/build()
   }
 
   /**

@@ -66,11 +66,20 @@ describe('3x3 draw order with a unit probe', () => {
     expect(shadow).toBeLessThan(wallKey(1, 1, Orientation.Left));
     expect(shadow).toBeLessThan(unit);
   });
+  it('every floor sorts before any shadow/wall/unit/roof, even from a farther diagonal', () => {
+    const floor = tileKey(3, 3, Layer.Floor, 0, seq++);
+    expect(floor).toBeLessThan(tileKey(0, 0, Layer.FloorShadow, 0, seq++));
+    expect(floor).toBeLessThan(tileKey(1, 0, Layer.FloorShadow, 0, seq++)); // floor diag 6 vs shadow diag 1
+    expect(floor).toBeLessThan(tileKey(0, 0, Layer.WallLower, Orientation.Left, seq++));
+    expect(floor).toBeLessThan(unitKey(0, 0, seq++));
+    expect(tileKey(2, 1, Layer.Floor, 0, seq++)).toBeLessThan(tileKey(0, 0, Layer.FloorShadow, 0, seq++)); // d+1 vs d
+    expect(tileKey(1, 1, Layer.Floor, 0, seq++)).toBeLessThan(tileKey(2, 1, Layer.Floor, 0, seq++)); // floors keep diagonal order
+  });
   it('full 3x3 sort is a strict total order matching (diag, layer, orientation)', () => {
     const items: { key: bigint; diag: number; layer: number; o: number }[] = [];
     for (let ty = 0; ty < 3; ty++) {
       for (let tx = 0; tx < 3; tx++) {
-        items.push({ key: tileKey(tx, ty, Layer.Floor, 0, seq++), diag: tx + ty, layer: Layer.Floor, o: 0 });
+        items.push({ key: tileKey(tx, ty, Layer.Floor, 0, seq++), diag: 0, layer: Layer.Floor, o: 0 });
         for (const o of walls) items.push({ key: wallKey(tx, ty, o), diag: tx + ty, layer: wallLayer(o), o });
       }
     }

@@ -8,7 +8,11 @@ import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
 import type { Camera } from '../world/camera';
 
-export const ATLAS_SIZE = 2048;
+/** Atlas edge: the device's 2D texture limit, capped (r8uint: 8192^2 = 64 MiB). */
+export const ATLAS_SIZE_CAP = 8192;
+export function atlasSizeFor(maxTextureDimension2D: number): number {
+  return Math.max(256, Math.min(maxTextureDimension2D, ATLAS_SIZE_CAP));
+}
 export const COLORMAP_ROWS_MAX = 64;
 export const PALETTE_ROWS_MAX = 16;
 
@@ -37,11 +41,14 @@ export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: GPUCanvasContext;
   private readonly canvasFormat: GPUTextureFormat;
-  private packer = new ShelfPacker(ATLAS_SIZE, ATLAS_SIZE);
+  readonly atlasSize: number;
+  private packer: ShelfPacker;
   private readonly atlas: GPUTexture;
   private readonly colormaps: GPUTexture;
   private readonly palettes: GPUTexture;
   private readonly scene: GPUTexture;
+  private readonly sceneView: GPUTextureView;
+  private readonly uni = new Float32Array(8);
   private readonly viewUniform: GPUBuffer;
   private readonly spriteBind: GPUBindGroup;
   private readonly blitBind: GPUBindGroup;
@@ -56,6 +63,8 @@ export class Renderer {
     this.gpu = gpu;
     const device = gpu.device;
     this.device = device;
+    this.atlasSize = atlasSizeFor(device.limits.maxTextureDimension2D);
+    this.packer = new ShelfPacker(this.atlasSize, this.atlasSize);
     this.canvas = canvas;
     this.sceneW = opts.width ?? 800;
     this.sceneH = opts.height ?? 600;
@@ -67,7 +76,7 @@ export class Renderer {
 
     this.atlas = device.createTexture({
       label: 'index-atlas',
-      size: [ATLAS_SIZE, ATLAS_SIZE],
+      size: [this.atlasSize, this.atlasSize],
       format: 'r8uint',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
@@ -89,6 +98,7 @@ export class Renderer {
       format: SCENE_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
+    this.sceneView = this.scene.createView();
     this.viewUniform = device.createBuffer({
       size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -179,7 +189,7 @@ export class Renderer {
     this.blitBind = device.createBindGroup({
       layout: blitBgl,
       entries: [
-        { binding: 0, resource: this.scene.createView() },
+        { binding: 0, resource: this.sceneView },
         { binding: 1, resource: device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' }) },
       ],
     });
@@ -198,7 +208,7 @@ export class Renderer {
 
   /** Forget every atlas placement (call when switching scenes; old texels are simply overwritten). */
   resetAtlas(): void {
-    this.packer = new ShelfPacker(ATLAS_SIZE, ATLAS_SIZE);
+    this.packer = new ShelfPacker(this.atlasSize, this.atlasSize);
   }
 
   /** Upload an 8-bit index image into the atlas. Index 0 = transparent. */
@@ -257,7 +267,7 @@ export class Renderer {
     this.lastInstances = data.byteLength / INSTANCE_BYTES;
 
     const o = camera.origin(this.sceneW, this.sceneH);
-    const uni = new Float32Array(8);
+    const uni = this.uni;
     uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, 0, 0, 0]);
     device.queue.writeBuffer(this.viewUniform, 0, uni);
 
@@ -278,7 +288,7 @@ export class Renderer {
     const scenePass = enc.beginRenderPass({
       colorAttachments: [
         {
-          view: this.scene.createView(),
+          view: this.sceneView,
           clearValue: { r: 0.02, g: 0.02, b: 0.03, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',

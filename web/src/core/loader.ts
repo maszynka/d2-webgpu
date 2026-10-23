@@ -41,7 +41,11 @@ export class CoreClient {
     const client = new CoreClient();
     client.worker = worker;
     worker.onmessage = (e: MessageEvent<Response>) => client.onMessage(e.data);
-    worker.onerror = (e) => client.failAll(new Error(e.message || 'worker error'));
+    worker.onerror = (e) => {
+      // a crashed worker never answers again: reject everything pending and make later calls reject too
+      client.failAll(new Error(e.message || 'worker error'));
+      client.terminate();
+    };
     try {
       const init = await client.call('init', { baseUrl });
       if (!init.available) {

@@ -159,6 +159,8 @@ export class TileSet {
  * Sort class of a DT1 wall type (approximate; the simplified set of sortkey.ts):
  * back edges -> WallLower, front edges and pillars -> WallUpper, 15 -> Roof, 16..19 lower walls -> WallLower.
  */
+// TODO: validate the wall type -> layer mapping (types 1/2 = left/right back edges, etc.) against townN1.ds1
+// with real MPQs; the current classification is approximate and untested on real data.
 export function wallClass(type: number): { layer: Layer; orientation: number } {
   switch (type) {
     case 1:

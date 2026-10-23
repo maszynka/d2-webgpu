@@ -89,12 +89,7 @@ void* mpq_read(const char* name) {
         if (!g_stack) throw std::runtime_error("mpq_read: no archives open");
         const auto data = g_stack->try_read(mpq_name(name));
         if (!data) throw std::runtime_error(std::string("file not found: ") + name);
-        d2core::Writer w(D2CORE_MAGIC_RAW, 1);
-        w.reserve(data->size() + 32);
-        w.entry(0);
-        w.u32(std::uint32_t(data->size()));
-        w.bytes(data->data(), data->size());
-        return w.finish();
+        return d2core::make_blob_block(D2CORE_MAGIC_RAW, data->data(), data->size());
     });
 }
 

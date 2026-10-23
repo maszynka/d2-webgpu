@@ -65,6 +65,22 @@ private:
     std::vector<std::uint8_t> buf_;
 };
 
+// Single-entry raw-bytes block ({magic, version, total, 1}, offset, u32 size, bytes, pad) written straight into one
+// exact-size malloc'd block (no intermediate buffer). Same layout as Writer(magic, 1) + entry(0) + u32(n) + bytes.
+inline void* make_blob_block(std::uint32_t magic, const void* data, std::size_t n) {
+    const std::size_t entry_off = 16 + 4;
+    const std::size_t total = (entry_off + 4 + n + 3) & ~std::size_t(3);
+    if (n > 0xFFFFFFFFu || total > 0xFFFFFFFFu) throw std::length_error("result exceeds 4 GiB");
+    auto* out = static_cast<std::uint8_t*>(std::calloc(1, total));  // zeroed: padding bytes are 0
+    if (!out) throw std::bad_alloc();
+    const std::uint32_t hdr[5] = {magic, D2CORE_ABI_VERSION, std::uint32_t(total), 1u, std::uint32_t(entry_off)};
+    std::memcpy(out, hdr, sizeof hdr);
+    const std::uint32_t size = std::uint32_t(n);
+    std::memcpy(out + entry_off, &size, 4);
+    if (n) std::memcpy(out + entry_off + 4, data, n);
+    return out;
+}
+
 // Last error (single-threaded: one worker).
 void set_error(std::string_view message);
 

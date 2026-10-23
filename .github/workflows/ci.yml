@@ -50,8 +50,8 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
         with:
           # docs/toolchain.md was written against Emscripten 6.0.13 (C++2c, -fwasm-exceptions with the legacy
-          # encoding, ports for zlib/bzip2). Newer releases are expected to work; pin once one is verified.
-          version: latest
+          # encoding, ports for zlib/bzip2).
+          version: 6.0.13
           actions-cache-folder: emsdk-cache
       - run: emcc --version
       - name: Build d2core.wasm (copies d2core.js/.wasm into web/public)
@@ -61,10 +61,6 @@ jobs:
         with:
           name: fixtures
           path: build-native/tests/fixtures
-      - name: Node test of the wasm module (wasm/tests/node)
-        run: |
-          D2CORE_JS="$PWD/build-wasm/d2core.js" D2CORE_FIXTURES="$PWD/build-native/tests/fixtures" \
-            node --test wasm/tests/node/d2core.test.mjs
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -76,6 +72,10 @@ jobs:
       - name: Install
         working-directory: web
         run: pnpm install --frozen-lockfile
+      - name: Node test of the wasm module (wasm/tests/node)
+        run: |
+          D2CORE_JS="$PWD/build-wasm/d2core.js" D2CORE_FIXTURES="$PWD/build-native/tests/fixtures" \
+            node --test wasm/tests/node/d2core.test.mjs
       - name: Typecheck
         working-directory: web
         run: pnpm typecheck

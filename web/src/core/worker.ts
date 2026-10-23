@@ -18,11 +18,13 @@ const MOUNT = '/d2';
 async function init(baseUrl: string): Promise<MethodResult['init']> {
   const url = new URL('d2core.js', baseUrl).href;
   try {
-    const probe = await fetch(url);
-    const type = probe.headers.get('content-type') ?? '';
-    if (!probe.ok || type.includes('text/html')) return { available: false, reason: `d2core.js not found (${probe.status})` };
-    await probe.arrayBuffer();
-    const imported = (await import(/* @vite-ignore */ url)) as Record<string, unknown>;
+    // No separate probe download: import directly (a missing file, or an SPA fallback serving HTML, fails the import).
+    let imported: Record<string, unknown>;
+    try {
+      imported = (await import(/* @vite-ignore */ url)) as Record<string, unknown>;
+    } catch (e) {
+      return { available: false, reason: `d2core.js could not be loaded from ${url}: ${e instanceof Error ? e.message : String(e)}` };
+    }
     const factory = (imported.default ?? imported.createD2Core) as ModuleFactory | undefined;
     if (typeof factory !== 'function') return { available: false, reason: 'd2core.js has no module factory export' };
     const mod: EmModule = await factory({ locateFile: (p: string) => new URL(p, baseUrl).href });
