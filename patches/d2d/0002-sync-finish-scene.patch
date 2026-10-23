@@ -1,0 +1,17 @@
+d2full 0002: main.cpp:1632 std::async(finish_scene) -> d2web::run_now (inline, ready future). The title is not shown while the rest of the scene loads (the Worker posts load status instead).
+
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -1629,7 +1629,12 @@
+     auto scene = load_scene(data_dir, patch_layer);   // the menus' part; nullopt if the MPQs won't load
+     // The rest loads while the title shows (run_windowed waits before the menus).
+     std::future<void> loading;
++    #ifdef D2WEB
++    // No threads in the browser build: the rest of the scene loads now, before the loop starts.
++    if (scene) loading = d2web::run_now([&scene, save_dir, map_seed] { finish_scene(*scene, save_dir, map_seed, game_seed); });
++#else
+     if (scene) loading = std::async(std::launch::async, [&scene, save_dir, map_seed] { finish_scene(*scene, save_dir, map_seed, game_seed); });
++#endif
+ 
+     std::atomic<std::uint64_t> frame_count{0};
+     std::atomic<bool>          quit{false};

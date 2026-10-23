@@ -1,0 +1,29 @@
+d2full 0005: apps/d2d/audio.hpp:379 std::async music decode -> d2_async (inline in the browser build). Dormant until stage F3 (no audio device yet).
+
+--- a/apps/d2d/audio.hpp
++++ b/apps/d2d/audio.hpp
+@@ -27,6 +27,15 @@
+ 
+ namespace d2d::client {
+ 
++// Music decoding on a worker thread; the browser build has none and decodes inline.
++template <class F> auto d2_async(F&& f) {
++#ifdef D2WEB
++    return d2web::run_now(std::forward<F>(f));
++#else
++    return std::async(std::launch::async, std::forward<F>(f));
++#endif
++}
++
+ // Sound output: OpenAL (openal-soft, as ../thirdeye), one source + buffer
+ // per channel: the NPC voice, the level's song, its ambience and UI
+ // clicks. Sounds.txt `Loop` entries play with AL_LOOPING. WAVs are decoded
+@@ -376,7 +385,7 @@
+         music_job_gain = gain;
+         music_job_loop = loop;
+         if (music_job.valid()) music_dropped.push_back(std::move(music_job));
+-        music_job = std::async(std::launch::async, [dir = game_data.data_dir, path = std::move(path)]() -> std::optional<Decoded> {
++        music_job = d2_async([dir = game_data.data_dir, path = std::move(path)]() -> std::optional<Decoded> {
+             d2d::mpq::Stack music_mpqs;
+             for (const char* name : { "d2xmusic.mpq", "d2music.mpq" })
+                 if (const auto mpq = d2d::install::find_file(dir, name)) music_mpqs.push(*mpq);

@@ -1,0 +1,30 @@
+d2full 0006: main.cpp:709 hang-watchdog std::thread compiled out in the browser build (a stuck frame is a stuck tab there). The Sentry frame-capture thread never starts: shim sentry.h reports sentry_is_enabled() == 0.
+
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -706,6 +706,7 @@
+     std::atomic<std::uint32_t> current_phase{std::uint32_t(MainPhase::Idle)};
+     g_current_phase_ptr = &current_phase;
+     std::atomic<bool> watchdog_stop{false};
++#ifndef D2WEB   // no threads in the browser build
+     std::thread watchdog([&] {
+         std::uint32_t last_reported = 0;
+         while (!watchdog_stop.load(std::memory_order_relaxed)) {
+@@ -721,6 +722,7 @@
+             }
+         }
+     });
++#endif
+ 
+     // Input, debug and state verbs for scripted tests (devctl_verbs.hpp).
+     register_game_verbs(channel, win, screen, csu, character, town, scene, audio);
+@@ -1460,7 +1462,9 @@
+     // Shut the watchdog down cleanly so it doesn't outlive SDL_Quit()
+     // and touch stale pointers.
+     watchdog_stop.store(true, std::memory_order_relaxed);
++#ifndef D2WEB
+     watchdog.join();
++#endif
+     g_current_phase_ptr = nullptr;
+     gamepads.close();   // before SDL goes away, not at scope exit
+     SDL_Quit();

@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// d2full platform layer: input queue, frame hand-off, main loop. See d2web.hpp.
+#include "d2web.hpp"
+
+#include <emscripten.h>
+#include <emscripten/heap.h>
+#include <emscripten/html5.h>
+#include <pthread.h>
+
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+
+// All JS-side state lives in globalThis.__d2web, created by game.worker.ts (or by
+// the node smoke test); every EM_JS body below creates a default one when nobody did
+// (EM_JS bodies are stringified as written: no macros).
+//   events  queue of int32[6] input records      want/gated  frame mailbox (FramePool)
+//   present(heapU8, ptr, w, h)  frame hand-off (web/src/full/framepool.ts)
+EM_JS(int, d2web_next_event_js, (std::int32_t * out), {
+    if (!globalThis.__d2web) globalThis.__d2web = { events: [], want: 2, gated: false, frames: 0, present: null }; const s = globalThis.__d2web;
+    if (s.events.length === 0) return 0;
+    const e = s.events.shift();
+    for (let i = 0; i < 6; i++) HEAP32[(out >> 2) + i] = e[i] | 0;
+    return 1;
+});
+
+// 1 = run a frame. Gated (worker): only while the page has asked for one.
+EM_JS(int, d2web_frame_wanted_js, (), {
+    if (!globalThis.__d2web) globalThis.__d2web = { events: [], want: 2, gated: false, frames: 0, present: null }; const s = globalThis.__d2web;
+    return (!s.gated || (s.pool ? s.pool.wanted : s.want > 0)) ? 1 : 0;
+});
+
+EM_JS(void, d2web_present_js, (const std::uint8_t* p, int w, int h), {
+    if (!globalThis.__d2web) globalThis.__d2web = { events: [], want: 2, gated: false, frames: 0, present: null }; const s = globalThis.__d2web;
+    s.frames++;
+    if (s.pool) s.pool.submit(HEAPU8, p, w, h);
+    else if (s.want > 0) s.want--;
+});
+
+namespace d2web {
+namespace {
+
+std::array<bool, SDL_SCANCODE_COUNT> g_keys{};
+SDL_MouseButtonFlags g_buttons = 0;
+SDL_Keymod g_mods = SDL_KMOD_NONE;
+float g_mouse_x = 0.f, g_mouse_y = 0.f;
+
+SDL_Keymod mods_from_flags(int f) {
+    int m = 0;
+    if (f & 1) m |= SDL_KMOD_LSHIFT;
+    if (f & 2) m |= SDL_KMOD_LCTRL;
+    if (f & 4) m |= SDL_KMOD_LALT;
+    if (f & 8) m |= SDL_KMOD_LGUI;
+    return SDL_Keymod(m);
+}
+
+SDL_MouseButtonFlags button_mask(int button) { return SDL_MouseButtonFlags(1u << (button - 1)); }
+
+void push_key(int scancode, bool down, bool repeat) {
+    if (scancode <= 0 || scancode >= int(g_keys.size())) return;
+    g_keys[std::size_t(scancode)] = down;
+    SDL_Event e{};
+    e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+    e.key.scancode = SDL_Scancode(scancode);
+    e.key.key = SDL_GetKeyFromScancode(SDL_Scancode(scancode), SDL_KMOD_NONE, false);
+    e.key.mod = g_mods;
+    e.key.down = down;
+    e.key.repeat = repeat;
+    SDL_PushEvent(&e);
+}
+
+void push_button(int button, bool down, float x, float y) {
+    if (button < 1 || button > 5) return;
+    if (down) g_buttons |= button_mask(button); else g_buttons &= ~button_mask(button);
+    g_mouse_x = x; g_mouse_y = y;
+    SDL_Event e{};
+    e.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+    e.button.button = std::uint8_t(button);
+    e.button.down = down;
+    e.button.clicks = 1;
+    e.button.x = x; e.button.y = y;
+    SDL_PushEvent(&e);
+}
+
+// Event record (6 int32): kind, a, b, c, d, e
+//  1 key    (scancode, down, repeat, modflags)
+//  2 motion (x, y)               pixels in the current frame
+//  3 button (button, down, x, y)  SDL numbering: 1 left 2 middle 3 right 4/5 extra
+//  4 wheel  (dy*1000, x, y)
+//  5 text   (unicode codepoint)
+//  6 blur   (release everything)
+//  7 quit
+void handle(const std::int32_t* r) {
+    switch (r[0]) {
+    case 1:
+        g_mods = mods_from_flags(r[4]);
+        SDL_SetModState(g_mods);
+        push_key(r[1], r[2] != 0, r[3] != 0);
+        break;
+    case 2: {
+        g_mouse_x = float(r[1]); g_mouse_y = float(r[2]);
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_MOTION;
+        e.motion.x = g_mouse_x; e.motion.y = g_mouse_y;
+        e.motion.state = g_buttons;
+        SDL_PushEvent(&e);
+        break;
+    }
+    case 3: push_button(r[1], r[2] != 0, float(r[3]), float(r[4])); break;
+    case 4: {
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_WHEEL;
+        e.wheel.y = float(r[1]) / 1000.f;
+        e.wheel.mouse_x = float(r[2]); e.wheel.mouse_y = float(r[3]);
+        e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+        SDL_PushEvent(&e);
+        break;
+    }
+    case 5: {
+        char text[5] = {};
+        const auto cp = std::uint32_t(r[1]);
+        if (cp < 0x80) { text[0] = char(cp); }
+        else if (cp < 0x800) { text[0] = char(0xC0 | (cp >> 6)); text[1] = char(0x80 | (cp & 0x3F)); }
+        else if (cp < 0x10000) { text[0] = char(0xE0 | (cp >> 12)); text[1] = char(0x80 | ((cp >> 6) & 0x3F)); text[2] = char(0x80 | (cp & 0x3F)); }
+        else { text[0] = char(0xF0 | (cp >> 18)); text[1] = char(0x80 | ((cp >> 12) & 0x3F)); text[2] = char(0x80 | ((cp >> 6) & 0x3F)); text[3] = char(0x80 | (cp & 0x3F)); }
+        SDL_Event e{};
+        e.type = SDL_EVENT_TEXT_INPUT;
+        e.text.text = text;   // SDL_PushEvent copies text events
+        SDL_PushEvent(&e);
+        break;
+    }
+    case 6:
+        g_mods = SDL_KMOD_NONE;
+        SDL_SetModState(g_mods);
+        for (int sc = 0; sc < int(g_keys.size()); ++sc) if (g_keys[std::size_t(sc)]) push_key(sc, false, false);
+        for (int b = 1; b <= 5; ++b) if (g_buttons & button_mask(b)) push_button(b, false, g_mouse_x, g_mouse_y);
+        break;
+    case 7: {
+        SDL_Event e{};
+        e.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&e);
+        break;
+    }
+    default: break;
+    }
+}
+
+}  // namespace
+
+void pump_input() {
+    std::int32_t record[6];
+    while (d2web_next_event_js(record)) handle(record);
+}
+
+void present(const void* rgba, int w, int h) {
+    d2web_present_js(static_cast<const std::uint8_t*>(rgba), w, h);
+}
+
+bool frame_wanted() { return d2web_frame_wanted_js() != 0; }
+
+void yield(int ms) { emscripten_sleep(unsigned(ms < 1 ? 1 : ms)); }
+
+const bool* keyboard_state(int* count) {
+    if (count) *count = int(g_keys.size());
+    return g_keys.data();
+}
+SDL_Keymod mod_state() { return g_mods; }
+SDL_MouseButtonFlags mouse_state(float* x, float* y) {
+    if (x) *x = g_mouse_x;
+    if (y) *y = g_mouse_y;
+    return g_buttons;
+}
+
+}  // namespace d2web
+
+// Threads are compiled out (std::async/jthread sites patched to run inline).
+// Anything that still tries to start one fails loudly here rather than deep in libc.
+extern "C" int pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*) {
+    std::fputs("d2full: pthread_create called, but this build has no threads; a thread site was missed (docs/full-game-status.md)\n", stderr);
+    std::abort();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE std::size_t d2web_heap_bytes() { return emscripten_get_heap_size(); }

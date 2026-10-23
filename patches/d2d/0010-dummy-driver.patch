@@ -1,0 +1,16 @@
+d2full 0010: main() selects SDL's dummy video driver + software renderer unconditionally (the existing --headless hints), so SDL_CreateWindow/Renderer work in a Worker.
+
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -1769,6 +1769,11 @@
+     }
+     if (cfg.contains("music_volume")) g_music_volume = std::clamp(std::atoi(cfg["music_volume"].c_str()), 0, 100);
+ 
++#ifdef D2WEB
++    // No window system in a Worker: SDL's dummy video driver and software renderer, always.
++    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
++    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
++#endif
+     if (headless) {
+         if (!channel.active()) {
+             d2d::log::info("--headless with no --devctl has nothing to do. exiting.");

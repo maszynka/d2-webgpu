@@ -27,6 +27,8 @@ export interface PanelHandlers {
   onView(req: ViewRequest): void | Promise<void>;
   onMap(path: string): void | Promise<void>;
   onDemo(): void;
+  /** Start (or stop, when running) the full game on the selected folder. */
+  onPlay(): void | Promise<void>;
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -81,6 +83,7 @@ export class Panel {
       void this.run(async () => h.onMap(path));
     });
     el('demo-btn').addEventListener('click', () => h.onDemo());
+    el('play-btn').addEventListener('click', () => void this.run(async () => h.onPlay()));
   }
 
   setStatus(text: string, error = false): void {
@@ -90,6 +93,10 @@ export class Panel {
 
   enableGame(on: boolean): void {
     this.tools.hidden = !on;
+  }
+
+  setPlaying(on: boolean): void {
+    el('play-btn').textContent = on ? 'Stop game' : 'Play';
   }
 
   private async run(fn: () => Promise<void>): Promise<void> {

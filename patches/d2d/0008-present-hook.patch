@@ -1,0 +1,39 @@
+d2full 0008: the two SDL_UpdateTexture/RenderTexture/RenderPresent sites (main.cpp:491 boot loop, :1402 frame loop) call d2web::present(rgba, w, h) instead (copy into a pooled ArrayBuffer, postMessage to the main thread's WebGPU blit).
+
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -488,10 +488,14 @@
+         SDL_Event event;
+         while (SDL_PollEvent(&event)) if (event.type == SDL_EVENT_QUIT) quit = true;
+         if (boot_title) render_title(framebuffer, *scene, boot_title->buttons, std::uint32_t(SDL_GetTicks()));
++#ifdef D2WEB
++        d2web::present(framebuffer.data(), int(kScreenWidth), int(kScreenHeight));
++#else
+         SDL_UpdateTexture(win.texture, nullptr, framebuffer.data(), int(kScreenWidth * 4));
+         SDL_RenderClear(win.renderer);
+         SDL_RenderTexture(win.renderer, win.texture, nullptr, nullptr);
+         SDL_RenderPresent(win.renderer);
++#endif
+         crash_frame.update(framebuffer);
+         if (++frame_count == 1) d2d::log::info("First frame presented at {} ms after launch.", d2d::log::ms());
+         SDL_Delay(10);
+@@ -1414,12 +1418,19 @@
+         if (!(wflags & SDL_WINDOW_MINIMIZED)) {
+             current_phase.store(std::uint32_t(MainPhase::Upload),
+                                 std::memory_order_relaxed);
++#ifdef D2WEB
++            // Our WebGPU blit presents the frame: the RGBA buffer goes to the main thread.
++            d2web::present(framebuffer.data(), fb_width(framebuffer), int(kScreenHeight));
++#else
+             SDL_UpdateTexture(win.texture, nullptr, framebuffer.data(), fb_width(framebuffer) * 4);
+             SDL_RenderClear(win.renderer);
+             SDL_RenderTexture(win.renderer, win.texture, nullptr, nullptr);
++#endif
+             current_phase.store(std::uint32_t(MainPhase::Present),
+                                 std::memory_order_relaxed);
++#ifndef D2WEB
+             SDL_RenderPresent(win.renderer);
++#endif
+             crash_frame.update(framebuffer);
+         }
+         const std::uint32_t t_after_present = std::uint32_t(SDL_GetTicks());

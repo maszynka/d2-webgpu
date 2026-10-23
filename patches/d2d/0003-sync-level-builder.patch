@@ -1,0 +1,27 @@
+d2full 0003: components/game/gamedata.cpp:1196 want_level builds the level inline (ready future) instead of std::async. Keeps poll_levels()/level() semantics; the build is a frame hitch (stage F4: build in slices between frames).
+
+--- a/components/game/gamedata.cpp
++++ b/components/game/gamedata.cpp
+@@ -2,6 +2,9 @@
+ // GameData's runtime side: levels built on demand (the level builder),
+ // their populations, the COF timings the World reads. A translation unit
+ // of its own; load.hpp fills GameData at start.
++#ifdef D2WEB
++#include "d2web.hpp"
++#endif
+ #include "gamedata.hpp"
+ 
+ #include "log.hpp"
+@@ -1193,7 +1196,12 @@
+ void GameData::want_level(int id) const {
+     if (!builder || !builder->act1 || id == town.id || levels.contains(id) || builder->jobs.contains(id)
+         || !std::ranges::contains(kBuiltLevels, id)) return;
++    #ifdef D2WEB
++    // No threads: built inline, as an already-ready future, so poll_levels() installs it on its next call.
++    builder->jobs.emplace(id, d2web::run_now([this, id] { return build_level(*this, *builder, id); }));
++#else
+     builder->jobs.emplace(id, std::async(std::launch::async, [this, id] { return build_level(*this, *builder, id); }));
++#endif
+ }
+ 
+ void GameData::poll_levels() const {
