@@ -2,6 +2,7 @@
 // Draw list: records sorted by key, batched into one instanced draw per run of equal blend mode.
 
 import type { AtlasRect } from './atlas';
+import { packAux, type Surface } from './surface';
 
 export type BlendMode = 'opaque' | 'alpha50' | 'additive' | 'darken';
 
@@ -19,6 +20,8 @@ export interface DrawRecord {
   blend: BlendMode;
   colormapRow: number;
   paletteRow: number;
+  /** what the pixels are, for the lighting pass (docs/lighting.md); does not affect the sort key */
+  surface: Surface;
 }
 
 export interface Batch {
@@ -28,8 +31,8 @@ export interface Batch {
   count: number;
 }
 
-/** u32 words per instance: atlas x,y,w,h | pos x,y (i32) | draw w,h | colormapRow, paletteRow. */
-export const INSTANCE_WORDS = 10;
+/** u32 words per instance: atlas x,y,w,h | pos x,y (i32) | draw w,h | colormapRow, paletteRow | aux byte, anchor (i32). */
+export const INSTANCE_WORDS = 12;
 export const INSTANCE_BYTES = INSTANCE_WORDS * 4;
 
 export class DrawList {
@@ -89,6 +92,8 @@ export class DrawList {
       u[o + 7] = r.h;
       u[o + 8] = r.colormapRow;
       u[o + 9] = r.paletteRow;
+      s[o + 10] = packAux(r.surface.kind, r.surface.normal);
+      s[o + 11] = Math.round(r.surface.anchor ?? r.y + r.h);
       const last = batches[batches.length - 1];
       if (last && last.blend === r.blend) last.count++;
       else batches.push({ blend: r.blend, first: i, count: 1 });

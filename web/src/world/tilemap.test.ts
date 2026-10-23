@@ -5,6 +5,7 @@ import { dt1Result, ds1Result, type SynthCell, type SynthTile } from '../core/sy
 import { DrawList } from '../gpu/drawlist';
 import type { AtlasRect } from '../gpu/atlas';
 import { tileToScreen } from './iso';
+import { NormalSlot, SurfaceKind, UNLIT } from '../gpu/surface';
 import { Layer, Orientation, unitKey, unpackSortKey } from './sortkey';
 import {
   MapScene,
@@ -14,6 +15,7 @@ import {
   dt1PathsForDs1,
   levelTypeDt1Files,
   presetDt1Mask,
+  surfaceForDt1Type,
   wallClass,
   type SpriteUploader,
 } from './tilemap';
@@ -71,6 +73,45 @@ describe('DS1 file list -> MPQ paths', () => {
     expect(presetDt1Mask(prest, 'data\\global\\tiles\\ACT1\\TOWN\\townE1.ds1')).toEqual({ def: 2, mask: 7 });
     expect(presetDt1Mask(prest, 'data\\global\\tiles\\nope.ds1')).toEqual({ def: 1, mask: 5 });
     expect(presetDt1Mask('Def\tDt1Mask', 'x.ds1')).toBeNull();
+  });
+});
+
+describe('lighting surfaces from DT1 types', () => {
+  it('assigns kind and normal per type group', () => {
+    expect(surfaceForDt1Type(0, 100)).toEqual({ kind: SurfaceKind.Floor, normal: NormalSlot.Up });
+    expect(surfaceForDt1Type(13, 100)).toBe(UNLIT);
+    for (const t of [1, 5, 8, 10, 16, 18]) expect(surfaceForDt1Type(t, 100)).toMatchObject({ kind: SurfaceKind.WallSe, normal: NormalSlot.WallSe, anchor: 140 });
+    for (const t of [2, 6, 9, 11, 17, 19]) expect(surfaceForDt1Type(t, 100)).toMatchObject({ kind: SurfaceKind.WallSw, normal: NormalSlot.WallSw, anchor: 60 });
+    for (const t of [3, 4]) expect(surfaceForDt1Type(t, 100)).toMatchObject({ normal: NormalSlot.CornerNorth, anchor: 100 });
+    for (const t of [7, 12]) expect(surfaceForDt1Type(t, 100)).toMatchObject({ normal: NormalSlot.CornerSouth, anchor: 100 });
+    expect(surfaceForDt1Type(15, 100, 24)).toEqual({ kind: SurfaceKind.WallTop, normal: NormalSlot.Up, anchor: 24 });
+    expect(surfaceForDt1Type(14, 100)).toMatchObject({ kind: SurfaceKind.Card });
+    expect(surfaceForDt1Type(30, 100)).toBe(UNLIT);
+    // wall tiles whose width is not the standard 160 stay unlit until verified on real data
+    for (const t of [1, 2, 3, 7, 12, 19]) expect(surfaceForDt1Type(t, 100, 0, 80)).toBe(UNLIT);
+    expect(surfaceForDt1Type(0, 100, 0, 80)).toMatchObject({ kind: SurfaceKind.Floor });
+    expect(surfaceForDt1Type(15, 100, 24, 80)).toMatchObject({ kind: SurfaceKind.WallTop });
+  });
+  it('MapScene stamps records with them', () => {
+    const W = 2;
+    const ds1 = decodeDs1(
+      ds1Result({
+        width: W,
+        height: W,
+        floors: [Array.from({ length: 4 }, () => F)],
+        walls: [[{ style: 2, sequence: 1, wallType: 1 }, undefined, { style: 2, sequence: 3, wallType: 15 }, undefined]],
+        shadows: [[{ style: 5, sequence: 1 }, undefined, undefined, undefined]],
+      }),
+    );
+    const ts = tileset([floor(1, 0), wall(1, 2, 1), wall(15, 2, 3, 40, 24), shadow(5, 1)]);
+    const m = new MapScene(ds1, ts, new FakeUploader());
+    const rec = (tx: number, ty: number, type: number) => m.sprites.find((s) => s.tx === tx && s.ty === ty && s.type === type)!.record;
+    expect(rec(1, 1, 0).surface.kind).toBe(SurfaceKind.Floor);
+    expect(rec(0, 0, 13).surface).toBe(UNLIT);
+    expect(rec(0, 0, 13).blend).toBe('darken');
+    const w = rec(0, 0, 1);
+    expect(w.surface).toMatchObject({ kind: SurfaceKind.WallSe, anchor: tileToScreen(0, 0).y + 40 });
+    expect(rec(0, 1, 15).surface).toEqual({ kind: SurfaceKind.WallTop, normal: NormalSlot.Up, anchor: 24 });
   });
 });
 

@@ -16,6 +16,7 @@
 import type { DecodedDs1, DecodedDt1, DecodedTile, Ds1Layer } from '../core/abi';
 import type { AtlasRect } from '../gpu/atlas';
 import type { BlendMode, DrawList, DrawRecord } from '../gpu/drawlist';
+import { NormalSlot, SurfaceKind, UNLIT, type Surface } from '../gpu/surface';
 import { Layer, Orientation, tileKey } from './sortkey';
 import { TILE_H, TILE_W, tileToScreen } from './iso';
 
@@ -194,6 +195,53 @@ export function wallClass(type: number): { layer: Layer; orientation: number } {
   }
 }
 
+// --- lighting surfaces -------------------------------------------------------
+
+/**
+ * Lighting surface of a DT1 tile (docs/lighting.md). `topY` = screen y of the cell's top vertex, `roofHeight` = the
+ * tile's roof lift. Same type groups as `wallClass`: left (NW-edge) walls show their SE face, right (NE-edge)
+ * walls their SW face, corners are resolved per pixel by the sprite pass (marker normals).
+ */
+// TODO: validate the type -> surface mapping against real data (same caveat as wallClass); unknown types stay unlit.
+export function surfaceForDt1Type(type: number, topY: number, roofHeight = 0, width = TILE_W): Surface {
+  // TODO: wall geometry assumes the standard 160-px DT1 layout (top vertex at width / 2); wider/narrower wall tiles stay
+  // unlit until verified on real data.
+  const isWall = (type >= 1 && type <= 12) || (type >= 16 && type <= 19);
+  if (isWall && width !== TILE_W) return UNLIT;
+  switch (type) {
+    case Dt1Type.Floor:
+      return { kind: SurfaceKind.Floor, normal: NormalSlot.Up };
+    case Dt1Type.Shadow:
+      return UNLIT; // keeps its darken blend, no light of its own
+    case 1:
+    case 5:
+    case 8:
+    case 10:
+    case 16:
+    case 18:
+      return { kind: SurfaceKind.WallSe, normal: NormalSlot.WallSe, anchor: topY + 40 };
+    case 2:
+    case 6:
+    case 9:
+    case 11:
+    case 17:
+    case 19:
+      return { kind: SurfaceKind.WallSw, normal: NormalSlot.WallSw, anchor: topY - 40 };
+    case 3:
+    case 4:
+      return { kind: SurfaceKind.WallSe, normal: NormalSlot.CornerNorth, anchor: topY };
+    case 7:
+    case 12:
+      return { kind: SurfaceKind.WallSw, normal: NormalSlot.CornerSouth, anchor: topY };
+    case Dt1Type.Tree:
+      return { kind: SurfaceKind.Card, normal: NormalSlot.CardRound, anchor: topY + 40 };
+    case Dt1Type.Roof:
+      return { kind: SurfaceKind.WallTop, normal: NormalSlot.Up, anchor: roofHeight };
+    default:
+      return UNLIT; // TODO: unknown DT1 type, not lit until its geometry is known
+  }
+}
+
 // --- draw list -------------------------------------------------------------
 
 export interface MapSprite {
@@ -277,6 +325,7 @@ export class MapScene {
         blend,
         colormapRow: this.opts.colormapRow ?? 0,
         paletteRow: this.opts.paletteRow ?? 0,
+        surface: surfaceForDt1Type(type, top.y, tile.roofHeight, tile.width),
       },
     });
     return true;
