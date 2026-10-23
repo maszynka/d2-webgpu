@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # d2-webgpu — plan implementacji
 
 Status: v2 (2026-10-23), po review Gemini 3.8 Flash Medium + Claude Fable (sekcja "Review v1" na końcu). Autor: Claude (Opus 5.5).
@@ -38,6 +39,9 @@ Projekt hobbystyczny. Nie trafia do produkcji komercyjnej.
    Klucz sortowania ustalony od razu (żeby M4 go nie zmieniał):
    `(tileY+tileX, layer, subtileDepth, orientation, seq)` spakowany do u64 (BigInt w TS)
    z `layer ∈ {floor, floor_shadow, wall_lower, unit, wall_upper, roof}`.
+   Świadome odstępstwo od upstreamu (`world_view.cpp:430`): tam ściany przekątnej d rysują się przed jednostkami d;
+   tu podział wall_lower/wall_upper zależy od typu ściany (drzewa i nieznane typy → wall_upper, przed jednostką).
+   Do weryfikacji na prawdziwym `townN1.ds1` (TODO przy `wallClass` w `web/src/world/tilemap.ts`).
    Produkowany przez warstwę świata, konsumowany przez backend WebGPU.
    Pozwala później dodać backend CPU (autentyczny 8-bit) bez zmian w świecie.
 7. **Brak MPQ na maszynie deweloperskiej.** Testy na małych, ręcznie złożonych buforach

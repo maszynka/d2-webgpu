@@ -93,6 +93,6 @@ export class DrawList {
       if (last && last.blend === r.blend) last.count++;
       else batches.push({ blend: r.blend, first: i, count: 1 });
     });
-    return { batches, data, order };
+    return { batches, data, order }; // order aliases sorted(): valid until the next sorted()/build()
   }
 }

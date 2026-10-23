@@ -32,7 +32,7 @@ function showAbout(): void {
   const a = aboutInfo();
   const link = $<HTMLAnchorElement>('src-link');
   link.textContent = a.sourceUrl;
-  if (/^https?:\/\//.test(a.sourceUrl) && !a.sourceUrl.includes('example.invalid')) link.href = a.sourceUrl;
+  if ((/^https?:\/\//.test(a.sourceUrl) && !a.sourceUrl.includes('example.invalid')) || a.sourceUrl.startsWith('/source/')) link.href = a.sourceUrl;
   $('commit').textContent = a.commit;
 }
 
