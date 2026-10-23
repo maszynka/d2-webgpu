@@ -1,107 +1,101 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Web Worker hosting d2core.wasm (Emscripten). Missing module => init reports unavailable (demo mode).
+// MPQs are mounted through WORKERFS (lazy File.slice reads, nothing copied into wasm memory).
 
-import { ABI_MAGIC } from './abi';
+import { D2Core, type EmModule, type ModuleFactory } from './binding';
+import { decodeRaw } from './abi';
 import type { Method, MethodArgs, MethodResult, Request, Response } from './protocol';
-
-interface EmModule {
-  HEAPU8: Uint8Array;
-  _malloc(n: number): number;
-  _free?(p: number): void;
-  [fn: string]: unknown;
-}
-
-type ModuleFactory = (opts?: Record<string, unknown>) => Promise<EmModule>;
 
 const ctx = self as unknown as {
   postMessage(msg: unknown, transfer?: Transferable[]): void;
   onmessage: ((e: MessageEvent<Request>) => void) | null;
 };
 
-let mod: EmModule | null = null;
-
-// Exported C function names (adapt to docs/abi.md once the wasm side is final).
-const DECODE_FN: Record<
-  'decodePalette' | 'decodeColormap' | 'decodeDc6' | 'decodeDt1' | 'decodeDs1',
-  string
-> = {
-  decodePalette: '_d2core_palette_decode',
-  decodeColormap: '_d2core_colormap_decode',
-  decodeDc6: '_d2core_dc6_decode',
-  decodeDt1: '_d2core_dt1_decode',
-  decodeDs1: '_d2core_ds1_decode',
-};
+let core: D2Core | null = null;
+let mounted = false;
+const MOUNT = '/d2';
 
 async function init(baseUrl: string): Promise<MethodResult['init']> {
   const url = new URL('d2core.js', baseUrl).href;
   try {
-    const probe = await fetch(url, { method: 'GET' });
+    const probe = await fetch(url);
     const type = probe.headers.get('content-type') ?? '';
     if (!probe.ok || type.includes('text/html')) return { available: false, reason: `d2core.js not found (${probe.status})` };
     await probe.arrayBuffer();
     const imported = (await import(/* @vite-ignore */ url)) as Record<string, unknown>;
-    const factory = (imported.default ?? imported.createD2Core ?? imported.Module) as ModuleFactory | undefined;
+    const factory = (imported.default ?? imported.createD2Core) as ModuleFactory | undefined;
     if (typeof factory !== 'function') return { available: false, reason: 'd2core.js has no module factory export' };
-    mod = await factory({ locateFile: (p: string) => new URL(p, baseUrl).href });
+    const mod: EmModule = await factory({ locateFile: (p: string) => new URL(p, baseUrl).href });
+    core = new D2Core(mod);
     return { available: true };
   } catch (e) {
     return { available: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
 
-function requireMod(): EmModule {
-  if (!mod) throw new Error('d2core wasm not loaded');
-  return mod;
+function requireCore(): D2Core {
+  if (!core) throw new Error('d2core wasm not loaded');
+  return core;
 }
 
-function fn(m: EmModule, name: string): (...a: number[]) => number {
-  const f = m[name];
-  if (typeof f !== 'function') throw new Error(`wasm export ${name} missing`);
-  return f as (...a: number[]) => number;
-}
-
-/** Copy input into wasm memory, call decode fn, copy ABI result out into a fresh ArrayBuffer, free. */
-function callDecode(name: string, input: ArrayBuffer): ArrayBuffer {
-  const m = requireMod();
-  const inPtr = m._malloc(input.byteLength);
-  m.HEAPU8.set(new Uint8Array(input), inPtr);
-  try {
-    const outPtr = fn(m, name)(inPtr, input.byteLength);
-    if (!outPtr) throw new Error(`${name} failed`);
-    const dv = new DataView(m.HEAPU8.buffer, outPtr, 16);
-    if (dv.getUint32(0, true) !== ABI_MAGIC) throw new Error(`${name}: bad ABI magic`);
-    const total = dv.getUint32(8, true);
-    const copy = m.HEAPU8.slice(outPtr, outPtr + total).buffer;
-    const free = m['_d2core_free'];
-    if (typeof free === 'function') (free as (p: number) => void)(outPtr);
-    return copy;
-  } finally {
-    m._free?.(inPtr);
+function mountMpqs(files: File[], order: string[]): MethodResult['mountMpqs'] {
+  const c = requireCore();
+  const fs = c.m.FS;
+  c.mpqClose();
+  if (mounted) {
+    fs.unmount(MOUNT);
+    mounted = false;
   }
+  if (!fs.analyzePath(MOUNT).exists) fs.mkdir(MOUNT);
+  fs.mount(c.m.WORKERFS, { files }, MOUNT);
+  mounted = true;
+  const present = new Set(files.map((f) => f.name));
+  const names = order.filter((n) => present.has(n));
+  const opened = names.length > 0 ? c.mpqOpen(names.map((n) => `${MOUNT}/${n}`)) : 0;
+  return { opened, names };
+}
+
+/** mpq_read -> raw bytes, then a decoder of the same module. */
+function loadAndDecode(name: string, decode: (c: D2Core, raw: Uint8Array) => ArrayBuffer): ArrayBuffer {
+  const c = requireCore();
+  const raw = decodeRaw(c.mpqReadResult(name));
+  return decode(c, raw);
 }
 
 async function handle(req: Request): Promise<{ result: MethodResult[Method]; transfer: Transferable[] }> {
+  const bin = (buf: ArrayBuffer) => ({ result: buf, transfer: [buf] as Transferable[] });
+  const data = (a: unknown): Uint8Array => new Uint8Array((a as { data: ArrayBuffer }).data);
   switch (req.method) {
     case 'init':
       return { result: await init((req.args as MethodArgs['init']).baseUrl), transfer: [] };
-    case 'version': {
-      const m = requireMod();
-      const f = fn(m, '_d2core_version');
-      const p = f();
-      // Accept either a numeric version or a pointer to a C string.
-      const heap = m.HEAPU8;
-      if (p > 0 && p < heap.length) {
-        let e = p;
-        while (e < heap.length && heap[e] !== 0 && e - p < 256) e++;
-        const s = new TextDecoder().decode(heap.subarray(p, e));
-        if (/^[\x20-\x7e]+$/.test(s)) return { result: { version: s }, transfer: [] };
-      }
-      return { result: { version: String(p) }, transfer: [] };
+    case 'version':
+      return { result: { version: requireCore().version() }, transfer: [] };
+    case 'mountMpqs': {
+      const a = req.args as MethodArgs['mountMpqs'];
+      return { result: mountMpqs(a.files, a.order), transfer: [] };
     }
-    default: {
-      const buf = callDecode(DECODE_FN[req.method], (req.args as { data: ArrayBuffer }).data);
-      return { result: buf, transfer: [buf] };
-    }
+    case 'mpqHas':
+      return { result: requireCore().mpqHas((req.args as MethodArgs['mpqHas']).name), transfer: [] };
+    case 'mpqRead':
+      return bin(requireCore().mpqReadResult((req.args as MethodArgs['mpqRead']).name));
+    case 'decodePalette':
+      return bin(requireCore().paletteDecode(data(req.args)));
+    case 'decodeColormap':
+      return bin(requireCore().colormapDecode(data(req.args)));
+    case 'decodeDc6':
+      return bin(requireCore().dc6Decode(data(req.args)));
+    case 'decodeDt1':
+      return bin(requireCore().dt1Decode(data(req.args)));
+    case 'decodeDs1':
+      return bin(requireCore().ds1Decode(data(req.args)));
+    case 'loadPalette':
+      return bin(loadAndDecode((req.args as MethodArgs['loadPalette']).name, (c, raw) => c.paletteDecode(raw)));
+    case 'loadDc6':
+      return bin(loadAndDecode((req.args as MethodArgs['loadDc6']).name, (c, raw) => c.dc6Decode(raw)));
+    case 'loadDt1':
+      return bin(loadAndDecode((req.args as MethodArgs['loadDt1']).name, (c, raw) => c.dt1Decode(raw)));
+    case 'loadDs1':
+      return bin(loadAndDecode((req.args as MethodArgs['loadDs1']).name, (c, raw) => c.ds1Decode(raw)));
   }
 }
 

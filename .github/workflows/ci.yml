@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# native : cmake build + ctest of the C API (also writes the synthetic test fixtures)
+# web    : Emscripten build of d2core.wasm, then web typecheck / lint / vitest (incl. the wasm integration test) / build
+# e2e    : Playwright + Chromium on SwiftShader (continue-on-error: WebGPU in CI is best effort)
+# Merge gate: native + web. The deploy artifact is web/dist (base '/', no game data).
+name: ci
+
+on:
+  push:
+    branches: [main, master, 'feat/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: System libraries (StormLib uses the system zlib and bzip2 natively)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake zlib1g-dev libbz2-dev
+      - name: Configure
+        run: cmake -S wasm -B build-native -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-native -j"$(nproc)"
+      - name: ctest
+        run: ctest --test-dir build-native --output-on-failure
+      - name: Upload synthetic fixtures (DT1/DS1/DC6/palette/MPQs written by gen_fixtures)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixtures
+          path: build-native/tests/fixtures
+          if-no-files-found: error
+
+  web:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          # docs/toolchain.md was written against Emscripten 6.0.13 (C++2c, -fwasm-exceptions with the legacy
+          # encoding, ports for zlib/bzip2). Newer releases are expected to work; pin once one is verified.
+          version: latest
+          actions-cache-folder: emsdk-cache
+      - run: emcc --version
+      - name: Build d2core.wasm (copies d2core.js/.wasm into web/public)
+        run: wasm/build.sh
+      - name: Fixtures from the native job
+        uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: build-native/tests/fixtures
+      - name: Node test of the wasm module (wasm/tests/node)
+        run: |
+          D2CORE_JS="$PWD/build-wasm/d2core.js" D2CORE_FIXTURES="$PWD/build-native/tests/fixtures" \
+            node --test wasm/tests/node/d2core.test.mjs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: web
+        run: pnpm typecheck
+      - name: Lint
+        working-directory: web
+        run: pnpm lint
+      - name: Unit + wasm integration tests
+        working-directory: web
+        run: pnpm test
+      - name: Build (base '/')
+        working-directory: web
+        env:
+          VITE_BASE: /
+          VITE_SOURCE_URL: https://github.com/${{ github.repository }}
+          VITE_COMMIT: ${{ github.sha }}
+        run: pnpm build
+      - name: Check the build is root-relative and carries the wasm core
+        working-directory: web
+        run: |
+          grep -q 'src="/assets/' dist/index.html
+          test -f dist/d2core.wasm && test -f dist/d2core.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-core
+          path: |
+            web/public/d2core.js
+            web/public/d2core.wasm
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+  e2e:
+    needs: web
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-core
+          path: web/public
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: build-native/tests/fixtures
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Chromium
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright (SwiftShader WebGPU flags are in playwright.config.ts)
+        working-directory: web
+        run: pnpm e2e
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: web/test-results
+          if-no-files-found: ignore

@@ -37,7 +37,7 @@ export class Renderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: GPUCanvasContext;
   private readonly canvasFormat: GPUTextureFormat;
-  private readonly packer = new ShelfPacker(ATLAS_SIZE, ATLAS_SIZE);
+  private packer = new ShelfPacker(ATLAS_SIZE, ATLAS_SIZE);
   private readonly atlas: GPUTexture;
   private readonly colormaps: GPUTexture;
   private readonly palettes: GPUTexture;
@@ -194,6 +194,11 @@ export class Renderer {
 
   get adapterInfo(): GpuContext['info'] {
     return this.gpu.info;
+  }
+
+  /** Forget every atlas placement (call when switching scenes; old texels are simply overwritten). */
+  resetAtlas(): void {
+    this.packer = new ShelfPacker(ATLAS_SIZE, ATLAS_SIZE);
   }
 
   /** Upload an 8-bit index image into the atlas. Index 0 = transparent. */
