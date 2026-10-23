@@ -132,7 +132,23 @@ Każdy etap kończy się czymś widocznym i testem.
 - **Done:** chodzenie po obozie i generowanym outdoorze.
 
 ### M6 — "Glide look"
-- Blendy (25/50/75 %, additive, darken), światło per róg kafla interpolowane, cienie jednostek, tinty/colormapy, opcjonalnie perspektywa.
+- Blendy (25/50/75 %, additive, darken), cienie jednostek, tinty/colormapy, opcjonalnie perspektywa.
+- **Oświetlenie przez G-buffer** (pomysł z DamnationX, kod pisany od zera — jej licencja nie jest zgodna z GPL):
+  - Sprite pass pisze dwa targety: `index: r8uint` (indeks palety po colormapie) i `aux: r8uint`
+    = `kind << 5 | normal` (5 bitów indeksu normalnej z LUT).
+  - `kind`: `unlit` (UI, kursor, tekst — bez światła), `floor` (N = góra, z = 0), `wall_sw`, `wall_se`
+    (ściany wzdłuż osi kafla), `wall_top` (szczyty/kapitele, N = góra, z = h), `card` (jednostka jako
+    pionowy billboard u stóp), `card_emissive` (pociski, czary, obiekty świecące — bez cieniowania),
+    `wall_blended` (piksel ściany półprzezroczystej, oświetlany jak ściana, którą kontynuuje).
+  - Draw list dostaje pole `surface` (kind + normal) — ustawiane z typu kafla DT1 / rodzaju jednostki
+    przy generowaniu rekordów, bez zmiany klucza sortowania.
+  - Pass oświetlenia (fullscreen): pozycja z ekranu + `kind` (wysokość ściany z typu), światła punktowe
+    (promień gracza, pochodnie, ogniska, pociski z kolorem z Missiles.txt) + ambient poziomu
+    (Levels.txt, dzień/noc), Lambert z normalnej z LUT; wynik mnoży kolor po palecie albo wybiera
+    poziom światła z colormapy (tryb autentyczny, 8-bit).
+  - Zastępuje pierwotne „światło per róg kafla interpolowane”; tryb per-róg zostaje jako fallback/porównanie.
+  - Test: syntetyczna scena z podłogą, ścianą SW/SE i jednostką + jedno światło → snapshot bufora
+    aux i oczekiwana kolejność jasności (ściana zwrócona do światła jaśniejsza niż odwrócona).
 
 ### Później (poza zakresem tej iteracji)
 UI w grze (panele, ekwipunek), audio (Web Audio), wideo (Bink → przez ffmpeg.wasm lub pominięte), zapis D2S do OPFS, multiplayer (WebSocket proxy, `apps/d2proxy` jako wzór).
