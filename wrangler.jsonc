@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Static assets only: web/dist (app + wasm + bundled source archive). No game data.
+// web/dist (app + wasm + bundled source archive) behind a password Worker
+// (worker/index.ts, secret SITE_PASSWORD). No game data.
 {
   "name": "d2-webgpu",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./web/dist", "not_found_handling": "single-page-application" }
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  }
 }
