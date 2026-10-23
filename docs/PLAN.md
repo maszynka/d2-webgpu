@@ -149,6 +149,7 @@ Każdy etap kończy się czymś widocznym i testem.
   - Zastępuje pierwotne „światło per róg kafla interpolowane”; tryb per-róg zostaje jako fallback/porównanie.
   - Test: syntetyczna scena z podłogą, ścianą SW/SE i jednostką + jedno światło → snapshot bufora
     aux i oczekiwana kolejność jasności (ściana zwrócona do światła jaśniejsza niż odwrócona).
+  - Status: G-buffer: zrobione — draw list `surface`, MRT (index/aux/height + blend), pass oświetlenia, tryby off/smooth/authentic, demo + UI + testy (opis: `docs/lighting.md`); niezweryfikowane: mapowanie typów DT1 → kind/geometria ścian na prawdziwych MPQ, WGSL vs referencja CPU (brak testu odczytu GPU), światła z Levels.txt/Missiles.txt/pochodni mapy.
 
 ### Później (poza zakresem tej iteracji)
 UI w grze (panele, ekwipunek), audio (Web Audio), wideo (Bink → przez ffmpeg.wasm lub pominięte), zapis D2S do OPFS, multiplayer (WebSocket proxy, `apps/d2proxy` jako wzór).

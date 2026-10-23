@@ -5,6 +5,7 @@
 import type { DecodedDc6, DecodedFrame } from '../core/abi';
 import type { AtlasRect } from '../gpu/atlas';
 import type { DrawList } from '../gpu/drawlist';
+import { UNLIT } from '../gpu/surface';
 import { Layer, tileKey } from '../world/sortkey';
 
 export interface FrameUploader {
@@ -100,6 +101,7 @@ export class Dc6Viewer {
         blend: 'opaque',
         colormapRow: this.colormapRow,
         paletteRow: this.paletteRow,
+        surface: UNLIT,
       });
     };
     if (this.mosaic) this.dirFrames.forEach((p, i) => add(p, i));
