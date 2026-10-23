@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // WebGPU renderer, PLAN decision 5 + M6 G-buffer lighting (docs/lighting.md):
-// paletted sprites -> G-buffer (index/aux/height r8uint + blend layer) -> lighting pass -> scene rgba8unorm
+// paletted sprites -> G-buffer (index+palette row rg8uint, aux r8uint, height r16uint + blend layer) -> lighting pass -> scene rgba8unorm
 // (native res) -> nearest blit.
 
 import spriteWgsl from './shaders/sprite.wgsl?raw';
@@ -29,7 +29,9 @@ export interface RendererOptions {
 }
 
 const SCENE_FORMAT: GPUTextureFormat = 'rgba8unorm';
-const INDEX_FORMAT: GPUTextureFormat = 'r8uint';
+const INDEX_FORMAT: GPUTextureFormat = 'rg8uint'; // palette index, palette row
+const AUX_FORMAT: GPUTextureFormat = 'r8uint';
+const HEIGHT_FORMAT: GPUTextureFormat = 'r16uint'; // MRT bytes/sample: 2 + 1 + 2 + 4 = 9 (limit 32)
 const BLEND_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const SHADER_PREFIX = surfaceWgslConstants(MAX_LIGHTS) + lightLib;
 const DEFAULT_LIGHTING: LightingState = { mode: 'off', ambient: 1, lights: [] };
@@ -68,8 +70,6 @@ export class Renderer {
   private readonly lightingPipeline: GPURenderPipeline;
   private lighting: LightingState = DEFAULT_LIGHTING;
   private colormapRows = 1;
-  /** colormap-light-row + palette row used by the lighting pass for lit pixels */
-  litPaletteRow = 0;
   lastLights = 0;
   private readonly uni = new Float32Array(8);
   private readonly lightScratch = new ArrayBuffer(LIGHT_PARAMS_BYTES);
@@ -133,8 +133,8 @@ export class Renderer {
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       });
     this.gIndex = gTex('g-index', INDEX_FORMAT);
-    this.gAux = gTex('g-aux', INDEX_FORMAT);
-    this.gHeight = gTex('g-height', INDEX_FORMAT);
+    this.gAux = gTex('g-aux', AUX_FORMAT);
+    this.gHeight = gTex('g-height', HEIGHT_FORMAT);
     this.gBlend = gTex('g-blend', BLEND_FORMAT);
     this.gViews = [this.gIndex, this.gAux, this.gHeight, this.gBlend].map((t) => t.createView());
     this.gAttachments = this.gViews.map((view) => ({
@@ -220,8 +220,8 @@ export class Renderer {
             // integer targets: no blend state allowed, so blended records mask them out entirely
             targets: [
               { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
-              { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
-              { format: INDEX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
+              { format: AUX_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
+              { format: HEIGHT_FORMAT, writeMask: mode === 'opaque' ? GPUColorWrite.ALL : 0 },
               blend ? { format: BLEND_FORMAT, blend } : { format: BLEND_FORMAT },
             ],
           },
@@ -367,7 +367,7 @@ export class Renderer {
 
     const o = camera.origin(this.sceneW, this.sceneH);
     const uni = this.uni;
-    uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, this.litPaletteRow, 0, 0]);
+    uni.set([this.sceneW, this.sceneH, o.x, o.y, camera.zoom, 0, 0, 0]);
     device.queue.writeBuffer(this.viewUniform, 0, uni);
     device.queue.writeBuffer(this.lightBuf, 0, packLightParams(this.lighting, this.colormapRows, this.lightScratch));
     this.lastLights = Math.min(MAX_LIGHTS, this.lighting.lights.length);

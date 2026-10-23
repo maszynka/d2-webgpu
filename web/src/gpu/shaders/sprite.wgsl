@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Paletted sprite pass writing the G-buffer (docs/lighting.md):
-//   0 index  r8uint  palette index after the colormap row (0 is a real colour; see aux)
+//   0 index  rg8uint r = palette index after the colormap row (0 is a real colour; see aux), g = palette row of the record
 //   1 aux    r8uint  AUX_DRAWN | kind << AUX_KIND_SHIFT | normal slot (0 = nothing drawn)
-//   2 height r8uint  height of the pixel above the ground, px (ground position = (x, y + height))
+//   2 height r16uint height of the pixel above the ground, px (ground position = (x, y + height))
 //   3 blend  rgba8unorm  premultiplied "over" accumulation of blended records (reset by opaque ones)
 // Opaque records write targets 0-2 and reset 3; blended records only touch 3 (the integer targets have
 // writeMask 0 in those pipelines, WebGPU cannot blend integer formats). Generated consts + light.wgsl are prepended.
@@ -13,7 +13,7 @@ struct View {
   size: vec2f,   // offscreen target size in pixels
   origin: vec2f, // world position of target top-left (pixels)
   zoom: f32,
-  pal_row: f32,
+  pad0: f32,
   pad1: f32,
   pad2: f32,
 }
@@ -107,12 +107,12 @@ fn geometry(kind: u32, normal: u32, anchor: f32, p: vec2f, left: f32, u: f32, wi
       g.normal = NORM_CARD_TILT0 + min(u32(u / max(width, 1.0) * 8.0), 7u);
     }
   }
-  g.z = clamp(g.z, 0.0, 255.0);
+  g.z = clamp(g.z, 0.0, HEIGHT_MAX);
   return g;
 }
 
 struct FsOut {
-  @location(0) index: u32,
+  @location(0) index: vec2u, // r = palette index, g = palette row
   @location(1) aux: u32,
   @location(2) height: u32,
   @location(3) blend: vec4f,
@@ -134,7 +134,7 @@ fn fs(f: VsOut) -> FsOut {
 
   var o: FsOut;
   if (blend_mode == 0u) {
-    o.index = idx2;
+    o.index = vec2u(idx2, f.rows.y);
     o.aux = AUX_DRAWN | (kind << AUX_KIND_SHIFT) | g.normal;
     o.height = u32(g.z + 0.5);
     o.blend = vec4f(0.0);
@@ -142,10 +142,14 @@ fn fs(f: VsOut) -> FsOut {
   }
   // Blended record: only the blend layer (premultiplied, "over" = one / one-minus-src-alpha). The colour is
   // lit here for kinds that continue a lit surface (wall_blended), palette colour otherwise.
-  o.index = 0u;
+  o.index = vec2u(0u);
   o.aux = 0u;
   o.height = 0u;
-  let rgb = shade(idx2, f.rows.y, kind, g.normal, p, g.z);
+  // darken ignores the sprite's colour entirely, so skip the lighting work
+  var rgb = vec3f(0.0);
+  if (blend_mode != 3u) {
+    rgb = shade(idx2, f.rows.y, kind, g.normal, p, g.z);
+  }
   switch (blend_mode) {
     case 1u: { o.blend = vec4f(rgb * 0.5, 0.5); }        // alpha50
     case 2u: { o.blend = vec4f(rgb, 0.0); }              // additive: src + dst

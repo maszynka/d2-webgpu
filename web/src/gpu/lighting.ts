@@ -6,7 +6,7 @@
 // g = (sx, sy + z). True 3D position (2:1 dimetric view, ground foreshortened by sin 30 = 1/2, height by cos 30):
 // P = (g.x, 2 * g.y, z / cos 30).
 
-import { AUX_DRAWN, AUX_KIND_SHIFT, AUX_NORMAL_MASK, NORMALS, NORMAL_COUNT, NormalSlot, SurfaceKind, isLitKind } from './surface';
+import { AUX_DRAWN, HEIGHT_MAX, AUX_KIND_SHIFT, AUX_NORMAL_MASK, NORMALS, NORMAL_COUNT, NormalSlot, SurfaceKind, isLitKind } from './surface';
 
 export const MAX_LIGHTS = 32;
 export const Y_STRETCH = 2;
@@ -49,21 +49,43 @@ export function packLightParams(s: LightingState, colormapRows: number, out = ne
   const u = new Uint32Array(out, 0, 4);
   const f = new Float32Array(out);
   const n = Math.min(MAX_LIGHTS, s.lights.length);
+  const lastRow = Math.max(0, colormapRows - 1);
   u[0] = n;
   u[1] = MODE_ID[s.mode];
-  u[2] = s.brightRow ?? 0;
-  u[3] = s.darkRow ?? Math.max(0, colormapRows - 1);
-  const amb = ambientRgb(s.ambient);
-  f.set([amb[0], amb[1], amb[2], 0], 4);
+  u[2] = Math.min(lastRow, Math.max(0, Math.trunc(s.brightRow ?? 0)));
+  u[3] = Math.min(lastRow, Math.max(0, Math.trunc(s.darkRow ?? lastRow)));
+  const a = s.ambient;
+  if (typeof a === 'number') {
+    f[4] = a;
+    f[5] = a;
+    f[6] = a;
+  } else {
+    f[4] = a[0];
+    f[5] = a[1];
+    f[6] = a[2];
+  }
+  f[7] = 0;
   for (let i = 0; i < NORMAL_COUNT; i++) {
     const nv = NORMALS[i]!;
-    f.set([nv[0], nv[1], nv[2], 0], 8 + i * 4);
+    const o = 8 + i * 4;
+    f[o] = nv[0];
+    f[o + 1] = nv[1];
+    f[o + 2] = nv[2];
+    f[o + 3] = 0;
   }
   const base = 8 + NORMAL_COUNT * 4;
   f.fill(0, base);
   for (let i = 0; i < n; i++) {
     const l = s.lights[i]!;
-    f.set([l.x, l.y, l.z, l.radius, l.color[0], l.color[1], l.color[2], l.intensity], base + i * 8);
+    const o = base + i * 8;
+    f[o] = l.x;
+    f[o + 1] = l.y;
+    f[o + 2] = l.z;
+    f[o + 3] = l.radius;
+    f[o + 4] = l.color[0];
+    f[o + 5] = l.color[1];
+    f[o + 6] = l.color[2];
+    f[o + 7] = l.intensity;
   }
   return out;
 }
@@ -119,7 +141,7 @@ export function authenticRow(m: Rgb, brightRow: number, darkRow: number): number
 // --- sprite-pass geometry (mirror of `geometry` in sprite.wgsl) -------------------------------------------------
 
 export interface PixelGeometry {
-  /** height above the ground, px, clamped to 0..255 (before the byte rounding of `heightByte`) */
+  /** height above the ground, px, clamped to 0..HEIGHT_MAX (before the rounding of `heightTexel`) */
   z: number;
   /** normal slot actually stored in aux (corner / round markers resolved) */
   normal: number;
@@ -165,17 +187,19 @@ export function pixelGeometry(kind: number, normal: number, anchor: number, px: 
       n = NormalSlot.CardTilt0 + Math.min(Math.floor(((px - left) / Math.max(width, 1)) * 8), 7);
     }
   }
-  return { z: Math.min(255, Math.max(0, z)), normal: n };
+  return { z: Math.min(HEIGHT_MAX, Math.max(0, z)), normal: n };
 }
 
-/** The height target byte the sprite pass writes (`u32(z + 0.5)`). */
-export function heightByte(z: number): number {
+/** The r16uint height texel the sprite pass writes (`u32(z + 0.5)`). */
+export function heightTexel(z: number): number {
   return Math.floor(z + 0.5);
 }
 
 export interface ShadeInput {
   /** palette index after the sprite's own colormap row */
   index: number;
+  /** palette row of the record (G channel of the index target); default 0 */
+  paletteRow?: number;
   kind: number;
   normal: number;
   sx: number;
@@ -184,31 +208,58 @@ export interface ShadeInput {
 }
 
 export interface ShadeTables {
-  palette: (index: number) => Rgb; // 0..1
+  palette: (index: number, row: number) => Rgb; // 0..1
   /** colormap lookup: (row, index) -> index */
   colormap: (row: number, index: number) => number;
 }
 
 /** What the lighting pass outputs for a pixel (0..1 per channel). Mirrors `shade` in light.wgsl. */
 export function shadePixel(p: ShadeInput, s: LightingState, t: ShadeTables, colormapRows: number): Rgb {
-  const base = t.palette(p.index);
+  const row0 = p.paletteRow ?? 0;
+  const base = t.palette(p.index, row0);
   if (s.mode === 'off' || !isLitKind(p.kind)) return base;
   const m = lightMultiplier(p.sx, p.sy, p.z, p.normal, s.lights, s.ambient);
   if (s.mode === 'smooth') return { r: Math.min(1, base.r * m.r), g: Math.min(1, base.g * m.g), b: Math.min(1, base.b * m.b) };
   const row = authenticRow(m, s.brightRow ?? 0, s.darkRow ?? Math.max(0, colormapRows - 1));
-  return t.palette(t.colormap(row, p.index));
+  return t.palette(t.colormap(row, p.index), row0);
 }
 
 /** Colour of an empty (cleared) G-buffer texel, mirrors BACKGROUND in lighting.wgsl. */
 export const BACKGROUND: Rgb = { r: 0.02, g: 0.02, b: 0.03 };
 
 /**
- * One G-buffer texel -> colour (the opaque part of the lighting pass, mirrors `fs` in lighting.wgsl). `aux === 0` means
+ * One G-buffer texel -> colour (the opaque part of the lighting pass, mirrors `fs` in lighting.wgsl; `index`/`paletteRow` = R/G of the rg8uint index target). `aux === 0` means
  * nothing was drawn; any drawn pixel has AUX_DRAWN set, so palette index 0 is an ordinary colour.
  */
-export function shadeGBufferTexel(index: number, aux: number, height: number, sx: number, sy: number, s: LightingState, t: ShadeTables, colormapRows: number): Rgb {
+export function shadeGBufferTexel(index: number, paletteRow: number, aux: number, height: number, sx: number, sy: number, s: LightingState, t: ShadeTables, colormapRows: number): Rgb {
   if ((aux & AUX_DRAWN) === 0) return BACKGROUND;
-  return shadePixel({ index, kind: (aux >> AUX_KIND_SHIFT) & 7, normal: aux & AUX_NORMAL_MASK, sx, sy, z: height }, s, t, colormapRows);
+  return shadePixel({ index, paletteRow, kind: (aux >> AUX_KIND_SHIFT) & 7, normal: aux & AUX_NORMAL_MASK, sx, sy, z: height }, s, t, colormapRows);
+}
+
+// --- blend layer (mirror of the blend targets in sprite.wgsl + the composite in lighting.wgsl) -------------------
+
+export type BlendKind = 'alpha50' | 'additive' | 'darken';
+export interface Rgba extends Rgb {
+  a: number;
+}
+
+/** Premultiplied value a blended record writes to the blend target (`shade` colour `rgb`; darken ignores it). */
+export function blendSource(mode: BlendKind, rgb: Rgb): Rgba {
+  if (mode === 'alpha50') return { r: rgb.r * 0.5, g: rgb.g * 0.5, b: rgb.b * 0.5, a: 0.5 };
+  if (mode === 'additive') return { r: rgb.r, g: rgb.g, b: rgb.b, a: 0 };
+  return { r: 0, g: 0, b: 0, a: 0.5 };
+}
+
+/** GPU blend of one record onto the accumulator: "over" (one, one-minus-src-alpha) or additive (one, one). */
+export function accumulateBlend(dst: Rgba, src: Rgba, mode: BlendKind): Rgba {
+  const k = mode === 'additive' ? 1 : 1 - src.a;
+  return { r: src.r + dst.r * k, g: src.g + dst.g * k, b: src.b + dst.b * k, a: src.a + dst.a * k };
+}
+
+/** Final pixel: blend layer over the lit surface (mirrors `b.rgb + base * (1 - b.a)` in lighting.wgsl). */
+export function compositeTexel(base: Rgb, blend: Rgba): Rgb {
+  const k = 1 - blend.a;
+  return { r: blend.r + base.r * k, g: blend.g + base.g * k, b: blend.b + base.b * k };
 }
 
 export { SurfaceKind };

@@ -16,9 +16,9 @@ Cele sprite passa (rozdzielczość sceny, 800x600):
 
 | cel | format | zawartość |
 | --- | --- | --- |
-| 0 `index` | r8uint | indeks palety po colormapie rekordu; 0 jest zwykłym kolorem (prawdziwe colormapy D2 mapują na 0 = czerń), o "narysowano" decyduje `aux` |
+| 0 `index` | rg8uint | R = indeks palety po colormapie rekordu, G = wiersz palety rekordu (`paletteRow`); 0 jest zwykłym kolorem (prawdziwe colormapy D2 mapują na 0 = czerń), o "narysowano" decyduje `aux` |
 | 1 `aux` | r8uint | `0x80 \| kind << 4 \| normal`: bit 7 = narysowano, bity 4..6 kind (0..7), bity 0..3 indeks LUT normalnych (0..15); 0 = tło |
-| 2 `height` | r8uint | wysokość piksela nad gruntem w px (0..255), patrz niżej |
+| 2 `height` | r16uint | wysokość piksela nad gruntem w px (0..4095, `HEIGHT_MAX`), patrz niżej |
 | 3 `blend` | rgba8unorm | akumulator mieszania "over" rekordów półprzezroczystych |
 
 **Tło vs piksel narysowany.** Cel `aux` jest czyszczony do 0, a każdy narysowany piksel ma ustawiony bit `AUX_DRAWN` (0x80),
@@ -75,7 +75,7 @@ pozycja w przestrzeni światła: `(x, 2*(y+z), z/cos30)` (rzut dimetryczny 2:1: 
 * card: `anchor` = y stóp (domyślnie dolna krawędź sprite'a);
 * floor / unlit / emissive: bez `anchor`.
 
-`z` jest obcinane do 0..255 i zapisywane jako `floor(z + 0.5)`. CPU-owy odpowiednik geometrii sprite passa:
+`z` jest obcinane do 0..`HEIGHT_MAX` (4095; wysokie ściany D2 przekraczają 255 px) i zapisywane jako `floor(z + 0.5)`. CPU-owy odpowiednik geometrii sprite passa:
 `pixelGeometry` w `lighting.ts` (testy w `geometry.test.ts` sprawdzają z = 0 na liniach gruntu każdej orientacji ściany,
 rozwiązywanie rogów na SE/SW i konwencje kotwic w `surfaceForDt1Type`/`wallSurface`/demie). Przybliżenie: geometria ścian zakłada standardowe rozmieszczenie DT1 (wierzchołek
 kafla w połowie szerokości, dół sprite'a = dolny wierzchołek). Niezweryfikowane na prawdziwych MPQ.
@@ -95,8 +95,9 @@ Tryby:
 * `authentic`: `luma(L)` kwantyzowane do wiersza colormapy (jasny `brightRow`..ciemny `darkRow`),
   `paleta[colormapa[wiersz][indeks]]`, światło monochromatyczne, wynik tylko z palety.
 
-Ograniczenia: pass oświetlenia używa jednego wiersza palety (`litPaletteRow`, domyślnie 0); wiersz palety rekordu działa
-tylko dla rekordów mieszanych. Pozycje świateł w świecie, nie na ekranie.
+Wiersz palety jest per rekord (kanał G celu `index`), także dla rekordów nieprzezroczystych. `brightRow`/`darkRow` są
+obcinane do `colormapRows - 1`. Budżet MRT: 2 + 1 + 2 + 4 = 9 B/próbkę (limit 32). Pozycje świateł w świecie, nie na ekranie.
+Tilesety: kafle ścian o szerokości != 160 są `unlit`, dopóki geometria nie zostanie zweryfikowana na prawdziwych danych.
 
 ## Demo i UI
 

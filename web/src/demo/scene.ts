@@ -74,6 +74,12 @@ export class DemoScene {
   private readonly units: Placed[] = [];
   private readonly shadow: Placed;
   private readonly glow: Placed;
+  /** preallocated lights (torch, walker, fire), updated in place by `lights()` */
+  private readonly lightSet: [Light, Light, Light] = [
+    { x: 0, y: 0, z: 70, radius: 430, color: [1, 0.72, 0.38], intensity: 1 },
+    { x: 0, y: 0, z: 40, radius: 340, color: [0.75, 0.85, 1], intensity: 1.0 },
+    { x: 0, y: 0, z: 30, radius: 260, color: [1, 0.42, 0.1], intensity: 1 },
+  ];
 
   constructor(up: SpriteUploader) {
     const put = (s: RawSprite): Placed => ({ rect: up.uploadSprite(s.w, s.h, s.pixels), ox: s.ox, oy: s.oy });
@@ -148,17 +154,23 @@ export class DemoScene {
   }
 
   /** Point lights at time t: a torch by the ruin, the walker's own light, an orange flickering fire. */
-  lights(tSeconds: number): Light[] {
+  lights(tSeconds: number): readonly Light[] {
     const torch = tileToScreen(4, 4);
     const fire = tileToScreen(FIRE.tx, FIRE.ty);
     const u = DemoScene.unitPos(tSeconds);
     const s = subtileToScreen(u.sx, u.sy);
     const ff = flicker(tSeconds, 1.3);
-    return [
-      { x: torch.x, y: torch.y + 45, z: 70, radius: 430, color: [1, 0.72, 0.38], intensity: 1.25 * flicker(tSeconds, 0.7) },
-      { x: s.x, y: s.y + 8, z: 40, radius: 340, color: [0.75, 0.85, 1], intensity: 1.0 },
-      { x: fire.x, y: fire.y + 40, z: 30, radius: 260 + 60 * ff, color: [1, 0.42, 0.1], intensity: 1.5 * ff },
-    ];
+    const [lt, lw, lf] = this.lightSet;
+    lt.x = torch.x;
+    lt.y = torch.y + 45;
+    lt.intensity = 1.25 * flicker(tSeconds, 0.7);
+    lw.x = s.x;
+    lw.y = s.y + 8;
+    lf.x = fire.x;
+    lf.y = fire.y + 40;
+    lf.radius = 260 + 60 * ff;
+    lf.intensity = 1.5 * ff;
+    return this.lightSet;
   }
 
   /** World-space centre of the map, for the initial camera. */

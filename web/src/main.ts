@@ -86,6 +86,8 @@ async function main(): Promise<void> {
   };
 
   installDemoTables();
+  const cameraLight: Light = { x: 0, y: 0, z: 60, radius: 600, color: [1, 0.85, 0.6], intensity: 1.2 };
+  const cameraLights: readonly Light[] = [cameraLight];
   const lightUi = bindLightControls('smooth', DEMO_AMBIENT);
   const list = new DrawList();
   const camera = new Camera(0, 0);
@@ -261,10 +263,13 @@ async function main(): Promise<void> {
       active.map.fill(list, o.x, o.y, renderer.sceneW / camera.zoom, renderer.sceneH / camera.zoom);
     }
     // Demo: scripted lights. Map / viewer: no light sources of their own yet, so one light follows the camera.
-    const lights: Light[] =
-      active.kind === 'demo'
-        ? active.scene.lights(t)
-        : [{ x: camera.x, y: camera.y + 40, z: 60, radius: 600, color: [1, 0.85, 0.6], intensity: 1.2 }];
+    let lights: readonly Light[];
+    if (active.kind === 'demo') lights = active.scene.lights(t);
+    else {
+      cameraLight.x = camera.x;
+      cameraLight.y = camera.y + 40;
+      lights = cameraLights;
+    }
     renderer.setLighting({ mode: lightUi.mode, ambient: lightUi.ambient, lights });
     renderer.render(list, camera);
     state.lighting = { mode: lightUi.mode, ambient: lightUi.ambient, lights: renderer.lastLights };

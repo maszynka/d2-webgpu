@@ -87,6 +87,10 @@ describe('lighting surfaces from DT1 types', () => {
     expect(surfaceForDt1Type(15, 100, 24)).toEqual({ kind: SurfaceKind.WallTop, normal: NormalSlot.Up, anchor: 24 });
     expect(surfaceForDt1Type(14, 100)).toMatchObject({ kind: SurfaceKind.Card });
     expect(surfaceForDt1Type(30, 100)).toBe(UNLIT);
+    // wall tiles whose width is not the standard 160 stay unlit until verified on real data
+    for (const t of [1, 2, 3, 7, 12, 19]) expect(surfaceForDt1Type(t, 100, 0, 80)).toBe(UNLIT);
+    expect(surfaceForDt1Type(0, 100, 0, 80)).toMatchObject({ kind: SurfaceKind.Floor });
+    expect(surfaceForDt1Type(15, 100, 24, 80)).toMatchObject({ kind: SurfaceKind.WallTop });
   });
   it('MapScene stamps records with them', () => {
     const W = 2;

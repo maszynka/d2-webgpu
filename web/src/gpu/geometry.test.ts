@@ -2,7 +2,7 @@
 // CPU mirror of the sprite-pass geometry (sprite.wgsl `geometry`) and the anchor conventions of every producer of surfaces.
 import { describe, expect, it } from 'vitest';
 import { pixelGeometry } from './lighting';
-import { NormalSlot, SurfaceKind, type Surface } from './surface';
+import { HEIGHT_MAX, NormalSlot, SurfaceKind, type Surface } from './surface';
 import { wallSurface } from '../demo/scene';
 import { WALL_H } from '../demo/sprites';
 import { Orientation } from '../world/sortkey';
@@ -96,12 +96,13 @@ describe('pixelGeometry: tops and cards', () => {
     const wall = pixelGeometry(s.kind, s.normal, s.anchor!, LEFT + 120, TOP_Y + 20 - 10, LEFT, 160);
     expect(blended).toEqual(wall);
   });
-  it('card: z = 0 at the feet row, grows upward, clamps to 0..255', () => {
+  it('card: z = 0 at the feet row, grows upward, clamps to 0..HEIGHT_MAX', () => {
     const g = (py: number) => pixelGeometry(SurfaceKind.Card, NormalSlot.CardFlat, 200, 50, py, 40, 28);
     expect(g(200).z).toBe(0);
     expect(g(150).z).toBe(50);
     expect(g(250).z).toBe(0);
-    expect(g(-500).z).toBe(255);
+    expect(g(-500).z).toBe(700); // tall walls / cards exceed 255 px (r16uint height)
+    expect(g(-50000).z).toBe(HEIGHT_MAX);
     expect(g(150).normal).toBe(NormalSlot.CardFlat);
   });
   it('round cards pick tilt slots 8..15 across the full sprite width, left to right', () => {

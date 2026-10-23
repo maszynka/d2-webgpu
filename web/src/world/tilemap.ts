@@ -203,7 +203,11 @@ export function wallClass(type: number): { layer: Layer; orientation: number } {
  * walls their SW face, corners are resolved per pixel by the sprite pass (marker normals).
  */
 // TODO: validate the type -> surface mapping against real data (same caveat as wallClass); unknown types stay unlit.
-export function surfaceForDt1Type(type: number, topY: number, roofHeight = 0): Surface {
+export function surfaceForDt1Type(type: number, topY: number, roofHeight = 0, width = TILE_W): Surface {
+  // TODO: wall geometry assumes the standard 160-px DT1 layout (top vertex at width / 2); wider/narrower wall tiles stay
+  // unlit until verified on real data.
+  const isWall = (type >= 1 && type <= 12) || (type >= 16 && type <= 19);
+  if (isWall && width !== TILE_W) return UNLIT;
   switch (type) {
     case Dt1Type.Floor:
       return { kind: SurfaceKind.Floor, normal: NormalSlot.Up };
@@ -321,7 +325,7 @@ export class MapScene {
         blend,
         colormapRow: this.opts.colormapRow ?? 0,
         paletteRow: this.opts.paletteRow ?? 0,
-        surface: surfaceForDt1Type(type, top.y, tile.roofHeight),
+        surface: surfaceForDt1Type(type, top.y, tile.roofHeight, tile.width),
       },
     });
     return true;

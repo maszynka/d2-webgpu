@@ -5,7 +5,10 @@ import {
   MAX_LIGHTS,
   BACKGROUND,
   authenticRow,
-  heightByte,
+  heightTexel,
+  blendSource,
+  accumulateBlend,
+  compositeTexel,
   normalVector,
   shadeGBufferTexel,
   lightMultiplier,
@@ -38,6 +41,14 @@ describe('light buffer packing', () => {
     const base = 8 + NORMAL_COUNT * 4;
     expect([...f.slice(base, base + 8)]).toEqual([1, 2, 3, 4, 0.5, 0.25, 0.125, 2]);
     expect(f[base + 8]).toBe(9);
+  });
+  it('clamps brightRow / darkRow to colormapRows - 1', () => {
+    const u = new Uint32Array(packLightParams({ mode: 'authentic', ambient: 1, lights: [], brightRow: 99, darkRow: 99 }, 8));
+    expect([u[2], u[3]]).toEqual([7, 7]);
+    const v = new Uint32Array(packLightParams({ mode: 'authentic', ambient: 1, lights: [], brightRow: -3, darkRow: 3 }, 8));
+    expect([v[2], v[3]]).toEqual([0, 3]);
+    const w = new Uint32Array(packLightParams({ mode: 'authentic', ambient: 1, lights: [] }, 0));
+    expect([w[2], w[3]]).toEqual([0, 0]);
   });
   it('clamps to MAX_LIGHTS and honours explicit rows; scalar ambient is replicated', () => {
     const many = Array.from({ length: 40 }, (_, i) => light(i, 0));
@@ -113,7 +124,7 @@ describe('shadePixel (the lighting pass per pixel)', () => {
   const st = (mode: LightingState['mode'], ambient = 0.15): LightingState => ({ mode, ambient, lights: [light(60, 30, 30)] });
 
   it('off, unlit and card_emissive return the palette colour unchanged', () => {
-    const base = tables.palette(idx);
+    const base = tables.palette(idx, 0);
     expect(shadePixel(px(SurfaceKind.WallSe), st('off'), tables, 8)).toEqual(base);
     expect(shadePixel(px(SurfaceKind.Unlit), st('smooth'), tables, 8)).toEqual(base);
     expect(shadePixel(px(SurfaceKind.CardEmissive), st('smooth'), tables, 8)).toEqual(base);
@@ -121,7 +132,7 @@ describe('shadePixel (the lighting pass per pixel)', () => {
     expect(shadePixel(px(SurfaceKind.CardEmissive), st('authentic'), tables, 8)).toEqual(base);
   });
   it('smooth multiplies the palette colour by the light and clamps to 1', () => {
-    const base = tables.palette(idx);
+    const base = tables.palette(idx, 0);
     const m = lightMultiplier(0, 0, 30, NormalSlot.WallSe, st('smooth').lights, 0.15);
     const out = shadePixel(px(SurfaceKind.WallSe), st('smooth'), tables, 8);
     expect(out.r).toBeCloseTo(Math.min(1, base.r * m.r), 9);
@@ -144,7 +155,7 @@ describe('shadePixel (the lighting pass per pixel)', () => {
     expect([...rows].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     // output is exactly one of the palette entries reachable through a colormap row
     const reachable = new Set<number>();
-    for (let r = 0; r < 8; r++) reachable.add(JSON.stringify(tables.palette(tables.colormap(r, idx))) as unknown as number);
+    for (let r = 0; r < 8; r++) reachable.add(JSON.stringify(tables.palette(tables.colormap(r, idx), 0)) as unknown as number);
     const out = shadePixel(px(SurfaceKind.WallSe), { ...st('authentic'), lights: [light(60, 30, 30, 400, 0.5)] }, tables, 8);
     expect(reachable.has(JSON.stringify(out) as unknown as number)).toBe(true);
     // coloured light does not tint in authentic mode
@@ -160,8 +171,8 @@ describe('rounding parity and normal fallback', () => {
     expect(authenticRow({ r: 0.5, g: 0.5, b: 0.5 }, 0, 3)).toBe(2); // 1.5 -> 2
     expect(authenticRow({ r: 0.5, g: 0.5, b: 0.5 }, 0, 5)).toBe(3); // 2.5 -> 3 (half-to-even would give 2)
   });
-  it('height byte rounds .5 up', () => {
-    expect([0.5, 1.5, 2.5, 127.5, 254.4].map(heightByte)).toEqual([1, 2, 3, 128, 254]);
+  it('height texel rounds .5 up and holds values above 255', () => {
+    expect([0.5, 1.5, 2.5, 127.5, 254.4, 300.4].map(heightTexel)).toEqual([1, 2, 3, 128, 254, 300]);
   });
   it('out-of-range normal slots clamp to the last slot (WGSL min(normal, NORMAL_COUNT - 1u))', () => {
     expect(normalVector(NORMAL_COUNT)).toBe(NORMALS[NORMAL_COUNT - 1]);
@@ -178,7 +189,7 @@ describe('drawn vs. empty G-buffer texels (palette index 0 is a real colour)', (
     colormap: (row, i) => (i === 7 ? 0 : i + row * 0), // colormap row maps index 7 -> 0 (true black), as real D2 colormaps do
   };
   const lit: LightingState = { mode: 'smooth', ambient: 0.5, lights: [] };
-  const shade = (index: number, aux: number, s: LightingState) => shadeGBufferTexel(index, aux, 0, 0, 0, s, tables, 8);
+  const shade = (index: number, aux: number, s: LightingState) => shadeGBufferTexel(index, 0, aux, 0, 0, 0, s, tables, 8);
 
   it('cleared aux (0) shows the background, whatever the index', () => {
     for (const mode of ['off', 'smooth', 'authentic'] as const) expect(shade(0, 0, { ...lit, mode })).toEqual(BACKGROUND);
@@ -198,5 +209,71 @@ describe('drawn vs. empty G-buffer texels (palette index 0 is a real colour)', (
   it('authentic: a colormap that maps to index 0 darkens to true black instead of vanishing', () => {
     const out = shade(7, packAux(SurfaceKind.Floor, NormalSlot.Up), { mode: 'authentic', ambient: 0, lights: [] });
     expect(out).toEqual(black);
+  });
+});
+
+describe('per-record palette row (G channel of the index target)', () => {
+  // palette row 1 is a different colour for the same index
+  const tables: ShadeTables = {
+    palette: (i, row) => (row === 1 ? { r: 0, g: 0, b: 0.8 } : { r: 0.8, g: 0, b: i * 0 }),
+    colormap: (_row, i) => i,
+  };
+  const aux = packAux(SurfaceKind.Floor, NormalSlot.Up);
+  const off: LightingState = { mode: 'off', ambient: 1, lights: [] };
+  it('opaque texels use their own palette row in every mode', () => {
+    for (const mode of ['off', 'smooth', 'authentic'] as const) {
+      const s: LightingState = { mode, ambient: 1, lights: [] };
+      expect(shadeGBufferTexel(5, 0, aux, 0, 0, 0, s, tables, 8)).toEqual({ r: 0.8, g: 0, b: 0 });
+      expect(shadeGBufferTexel(5, 1, aux, 0, 0, 0, s, tables, 8)).toEqual({ r: 0, g: 0, b: 0.8 });
+    }
+    expect(shadeGBufferTexel(5, 1, packAux(SurfaceKind.Unlit, 0), 0, 0, 0, off, tables, 8)).toEqual({ r: 0, g: 0, b: 0.8 });
+  });
+});
+
+describe('blend layer composite (premultiplied)', () => {
+  const base = { r: 0.4, g: 0.6, b: 0.2 };
+  const clear = { r: 0, g: 0, b: 0, a: 0 };
+  const white = { r: 1, g: 1, b: 1 };
+  const red = { r: 1, g: 0, b: 0 };
+  it('empty layer leaves the surface untouched', () => {
+    expect(compositeTexel(base, clear)).toEqual(base);
+  });
+  it('alpha50 = half colour + half surface', () => {
+    const b = accumulateBlend(clear, blendSource('alpha50', red), 'alpha50');
+    expect(b.a).toBeCloseTo(0.5, 9);
+    const c = compositeTexel(base, b);
+    expect(c.r).toBeCloseTo(0.5 * 1 + 0.5 * 0.4, 9);
+    expect(c.g).toBeCloseTo(0.5 * 0.6, 9);
+    expect(c.b).toBeCloseTo(0.5 * 0.2, 9);
+  });
+  it('additive adds colour without covering the surface', () => {
+    const b = accumulateBlend(clear, blendSource('additive', { r: 0.2, g: 0.1, b: 0 }), 'additive');
+    expect(b.a).toBe(0);
+    expect(compositeTexel(base, b)).toEqual({ r: 0.6000000000000001, g: 0.7, b: 0.2 });
+  });
+  it('darken halves the surface regardless of the sprite colour', () => {
+    const a = compositeTexel(base, accumulateBlend(clear, blendSource('darken', white), 'darken'));
+    const b = compositeTexel(base, accumulateBlend(clear, blendSource('darken', red), 'darken'));
+    expect(a).toEqual(b);
+    expect(a.r).toBeCloseTo(0.2, 9);
+    expect(a.g).toBeCloseTo(0.3, 9);
+  });
+  it('stacked pair: darken then alpha50 equals the classic sequential blend', () => {
+    let acc = accumulateBlend(clear, blendSource('darken', white), 'darken');
+    acc = accumulateBlend(acc, blendSource('alpha50', red), 'alpha50');
+    const out = compositeTexel(base, acc);
+    // classic: darken surface (x0.5), then 50% red over it
+    const dark = { r: base.r * 0.5, g: base.g * 0.5, b: base.b * 0.5 };
+    expect(out.r).toBeCloseTo(0.5 * 1 + 0.5 * dark.r, 9);
+    expect(out.g).toBeCloseTo(0.5 * dark.g, 9);
+    expect(out.b).toBeCloseTo(0.5 * dark.b, 9);
+    expect(acc.a).toBeCloseTo(0.75, 9);
+  });
+  it('stacked pair: alpha50 then additive', () => {
+    let acc = accumulateBlend(clear, blendSource('alpha50', red), 'alpha50');
+    acc = accumulateBlend(acc, blendSource('additive', { r: 0, g: 0.1, b: 0 }), 'additive');
+    const out = compositeTexel(base, acc);
+    expect(out.r).toBeCloseTo(0.5 + 0.5 * 0.4, 9);
+    expect(out.g).toBeCloseTo(0.1 + 0.5 * 0.6, 9);
   });
 });

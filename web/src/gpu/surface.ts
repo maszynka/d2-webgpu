@@ -34,6 +34,8 @@ export const NORMAL_COUNT = 16;
 export const AUX_DRAWN = 0x80;
 export const AUX_KIND_SHIFT = 4;
 export const AUX_NORMAL_MASK = 0x0f;
+/** Largest height (px above the ground) the r16uint height target stores; tall D2 walls exceed 255. */
+export const HEIGHT_MAX = 4095;
 export const CARD_TILTS = 8;
 
 const S2 = Math.SQRT1_2;
@@ -100,7 +102,7 @@ export function surfaceWgslConstants(maxLights: number): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(SurfaceKind)) lines.push(`const KIND_${k.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}: u32 = ${v}u;`);
   for (const [k, v] of Object.entries(NormalSlot)) lines.push(`const NORM_${k.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase()}: u32 = ${v}u;`);
-  lines.push(`const AUX_DRAWN: u32 = ${AUX_DRAWN}u;`, `const AUX_KIND_SHIFT: u32 = ${AUX_KIND_SHIFT}u;`, `const AUX_NORMAL_MASK: u32 = ${AUX_NORMAL_MASK}u;`);
+  lines.push(`const AUX_DRAWN: u32 = ${AUX_DRAWN}u;`, `const AUX_KIND_SHIFT: u32 = ${AUX_KIND_SHIFT}u;`, `const AUX_NORMAL_MASK: u32 = ${AUX_NORMAL_MASK}u;`, `const HEIGHT_MAX: f32 = ${HEIGHT_MAX}.0;`);
   lines.push(`const MAX_LIGHTS: u32 = ${maxLights}u;`, `const NORMAL_COUNT: u32 = ${NORMAL_COUNT}u;`);
   return lines.join('\n') + '\n';
 }

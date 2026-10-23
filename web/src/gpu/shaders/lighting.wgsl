@@ -6,7 +6,7 @@ struct View {
   size: vec2f,
   origin: vec2f, // world position of the target's top-left (px)
   zoom: f32,
-  pal_row: f32,  // palette row used for lit pixels
+  pad0: f32,
   pad1: f32,
   pad2: f32,
 }
@@ -35,10 +35,10 @@ fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
   let aux = textureLoad(g_aux, ip, 0).r;
   var base = BACKGROUND;
   if ((aux & AUX_DRAWN) != 0u) {
-    let idx = textureLoad(g_index, ip, 0).r;
+    let ir = textureLoad(g_index, ip, 0).rg; // r = palette index, g = palette row
     let z = f32(textureLoad(g_height, ip, 0).r);
     let world = floor(u_view.origin + frag.xy / u_view.zoom) + vec2f(0.5);
-    base = shade(idx, u32(u_view.pal_row), (aux >> AUX_KIND_SHIFT) & 7u, aux & AUX_NORMAL_MASK, world, z);
+    base = shade(ir.r, ir.g, (aux >> AUX_KIND_SHIFT) & 7u, aux & AUX_NORMAL_MASK, world, z);
   }
   let b = textureLoad(g_blend, ip, 0);
   return vec4f(b.rgb + base * (1.0 - b.a), 1.0);
