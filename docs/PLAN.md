@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # d2-webgpu — plan implementacji
 
 Status: v2 (2026-10-23), po review Gemini 3.8 Flash Medium + Claude Fable (sekcja "Review v1" na końcu). Autor: Claude (Opus 5.5).
@@ -38,6 +39,9 @@ Projekt hobbystyczny. Nie trafia do produkcji komercyjnej.
    Klucz sortowania ustalony od razu (żeby M4 go nie zmieniał):
    `(tileY+tileX, layer, subtileDepth, orientation, seq)` spakowany do u64 (BigInt w TS)
    z `layer ∈ {floor, floor_shadow, wall_lower, unit, wall_upper, roof}`.
+   Świadome odstępstwo od upstreamu (`world_view.cpp:430`): tam ściany przekątnej d rysują się przed jednostkami d;
+   tu podział wall_lower/wall_upper zależy od typu ściany (drzewa i nieznane typy → wall_upper, przed jednostką).
+   Do weryfikacji na prawdziwym `townN1.ds1` (TODO przy `wallClass` w `web/src/world/tilemap.ts`).
    Produkowany przez warstwę świata, konsumowany przez backend WebGPU.
    Pozwala później dodać backend CPU (autentyczny 8-bit) bez zmian w świecie.
 7. **Brak MPQ na maszynie deweloperskiej.** Testy na małych, ręcznie złożonych buforach
@@ -178,3 +182,33 @@ Przyjęte:
 Odrzucone / zmienione:
 - Fable 1 (własny czytnik MPQ jako ścieżka główna): odrzucone na teraz. StormLib z upstreamu ma już PKWARE/Huffman/zlib/bzip2 i jest przetestowany na prawdziwych danych; WORKERFS czyta leniwie, a tabele hash/block są małe. Własny czytnik zostaje planem B po pomiarze na prawdziwych MPQ.
 - Fable 17 (SharedArrayBuffer dla ticków): poza zakresem, notatka do M5.
+
+## Stan po M3 (2026-10-23)
+
+**Zrobione**
+- ABI: `web/src/core/abi.ts` czyta dokładnie layouty z `docs/abi.md` (RAW/PALETTE/COLORMAP/DC6/DT1/DS1, magic `D2xx`, wpisy wyrównane do 4 B, jawne długości).
+  `binding.ts` opakowuje eksporty z `d2core.h` (`mpq_open/has/read`, `*_decode`, `colormap_slice`, `d2core_last_error`, `result_size`);
+  worker (`worker.ts`) używa tego samego wrappera. Test integracyjny vitest (`wasm.integration.test.ts`) ładuje prawdziwy `d2core.wasm` w node
+  (NODEFS + MEMFS) i dekoduje bufory przez czytniki TS; pomijany bez zbudowanego wasm / fixtures.
+- M2: wybór folderu gry (`showDirectoryPicker`, uchwyt w IndexedDB, ponowne żądanie uprawnień po załadowaniu; fallback `<input webkitdirectory>`),
+  rozpoznanie MPQ bez względu na wielkość liter i kolejność nadpisywania (patch_d2 ostatni), WORKERFS w workerze, pole ścieżki + lista znanych ścieżek,
+  przeglądarka DC6 przez zwykły renderer (paleta z `pal.dat` przez `palette_decode`, animacja klatek albo wszystkie klatki naraz). Bez MPQ domyślne jest demo syntetyczne.
+- M3: ścieżka prawdziwej mapy (`world/tilemap.ts`, `world/loadmap.ts`): DS1 + DT1 z listy DS1 (ścieżki jak `ds1_path_to_mpq` upstreamu; gdy DS1 nie wskazuje
+  użytecznych DT1, np. `townN1.ds1` z `.tg1`, fallback na LvlTypes/LvlPrest jak w upstreamowym `load_town`), lookup kafla `(style, sequence, type)`
+  z wyborem wariantu po `rarity`, podłogi, cienie, ściany (róg typu 3 = 2 kafle), dachy z `roof_height`, klucze sortowania i kamera jak w demo.
+  Testy: ta sama ścieżka na syntetycznym DS1+DT1 (przez prawdziwe dekodery ABI), w tym kolejność rysowania i culling.
+- CI: `.github/workflows/ci.yml` (native ctest; wasm + web typecheck/lint/test/build z `base '/'`; e2e Playwright `continue-on-error`).
+- e2e: syntetyczny MPQ przez fallbackowy input folderu -> WORKERFS -> `mpq_open` -> przeglądarka DC6 (lokalnie przechodzi na SwiftShader).
+
+**Niezweryfikowane (brak prawdziwych MPQ)**
+- Otwarcie i szybkość prawdziwych `d2data.mpq`/`d2exp.mpq` przez WORKERFS; kolejność nadpisywania w praktyce.
+- Przeglądarka: `showDirectoryPicker` + ponowne nadanie uprawnień po restarcie przeglądarki (w Playwright działa tylko fallback z inputem).
+- Układ prawdziwego Rogue Encampment: warunek podłogi `prop1 & 2`, klasyfikacja typów ścian 1-19 na warstwy sortowania (przybliżona), wybór wariantów po `rarity`
+  (upstream bierze pierwszy), paleta do ekranów UI (`TitleScreen.dc6` może wymagać innej niż act 1; pole palety w UI), zapełnienie atlasu 2048x2048 na dużych mapach.
+- Parsowanie `LvlTypes.txt`/`LvlPrest.txt` (fallback) sprawdzone tylko na syntetycznych tabelach; typ poziomu = `Def` wiersza LvlPrest (upstream: 1 dla miasta aktu 1).
+- Wynik CI w GitHub Actions (workflow nieuruchamiany tu; wersja emsdk `latest`, kompilator natywny domyślny z ubuntu-latest).
+
+**Dalej**
+- Sprawdzenie ręczne na prawdziwych MPQ (viewer DC6, Load map `townN1.ds1`), poprawki warunków podłogi/ścian wg obrazu.
+- Przypięcie wersji emsdk po pierwszym zielonym CI; pomiar czasu otwarcia d2data.mpq (plan B: własny czytnik MPQ).
+- M4: DCC/COF i jednostki, sortowanie jednostek względem ścian per subkafel; przezroczystość ścian przed graczem; oświetlenie (M6).
