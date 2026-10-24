@@ -1,0 +1,24 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0013: widescreen view width comes from the page: the in-game branch of the resize block (main.cpp) takes d2web::view_width() (set by the page from its canvas aspect, clamped even 800..kMaxViewWidth) instead of SDL_GetWindowSizeInPixels, which never changes on the dummy driver. The worker passes --widescreen.
+
+diff -ru a/apps/d2d/main.cpp b/apps/d2d/main.cpp
+--- a/apps/d2d/main.cpp	2026-10-24 04:26:58
++++ b/apps/d2d/main.cpp	2026-10-24 04:27:05
+@@ -987,10 +987,17 @@
+         {
+             int want = int(kScreenWidth);
+             if (g_widescreen && screen == Screen::InGame) {
++#ifdef D2WEB
++                // The dummy-driver window never resizes: the page computes the width from its canvas's aspect
++                // (web/src/full/viewsize.ts) and posts it; the same clamp as below (even, 800..kMaxViewWidth).
++                want = g_forced_view_w > 0 ? g_forced_view_w
++                     : std::clamp(d2web::view_width() & ~1, int(kScreenWidth), kMaxViewWidth);
++#else
+                 int pixels_w = 0, pixels_h = 0;
+                 SDL_GetWindowSizeInPixels(win.window, &pixels_w, &pixels_h);
+                 want = g_forced_view_w > 0 ? g_forced_view_w
+                      : pixels_h > 0 ? std::clamp(int(kScreenHeight) * pixels_w / pixels_h & ~1, int(kScreenWidth), kMaxViewWidth) : int(kScreenWidth);
++#endif
+             }
+             if (want != win.view_w && win.set_view(want)) {
+                 framebuffer.assign(std::size_t(want) * kScreenHeight * 4, 0);

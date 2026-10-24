@@ -5,89 +5,100 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>d2-webgpu</title>
-    <style>
-      :root { color-scheme: dark; --bg: #0c0c0f; --fg: #d8d4c8; --dim: #8a867a; --acc: #c8a24a; }
-      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; }
-      body { display: grid; grid-template-rows: auto auto auto 1fr auto; }
-      header { padding: 8px 16px; display: flex; gap: 16px; align-items: baseline; }
-      header h1 { margin: 0; font-size: 16px; color: var(--acc); }
-      header span { color: var(--dim); }
-      main { position: relative; min-height: 0; }
-      canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
-      canvas:active { cursor: grabbing; }
-      #nogpu { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; padding: 24px; text-align: center; }
-      #nogpu.show { display: flex; }
-      #nogpu div { max-width: 40em; }
-      #debug { position: absolute; top: 8px; right: 8px; background: rgb(0 0 0 / 0.7); padding: 8px 10px; font: 12px/1.35 ui-monospace, monospace; border-radius: 4px; max-width: 34em; white-space: pre-wrap; }
-      #tools { padding: 4px 16px 8px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
-      #light-tools { padding: 4px 16px 0; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
-      #light-tools select, #light-tools input { font: inherit; color: var(--fg); background: #1a1a20; border: 1px solid #3a3a44; border-radius: 4px; padding: 3px 8px; }
-      #light-tools label { color: var(--dim); }
-      #tools button, #tools input { font: inherit; color: var(--fg); background: #1a1a20; border: 1px solid #3a3a44; border-radius: 4px; padding: 3px 8px; }
-      #tools button { cursor: pointer; }
-      #tools button:hover:not(:disabled) { border-color: var(--acc); }
-      #tools button:disabled { opacity: 0.5; cursor: default; }
-      #tools input[type=text] { width: 34em; max-width: 90vw; }
-      #tools input[type=number] { width: 4em; }
-      #tools label { color: var(--dim); }
-      #game-tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-      #game-tools[hidden], #regrant[hidden] { display: none; }
-      #game-status { color: var(--dim); }
-      #game-status.err { color: #e06c6c; }
-      footer { padding: 8px 16px; color: var(--dim); font-size: 12px; }
-      footer a { color: var(--acc); }
-    </style>
+    <link rel="stylesheet" href="./src/ui/style.css" />
   </head>
   <body>
-    <header>
-      <h1>d2-webgpu</h1>
-      <span>Demo scene (synthetic data). Drag / arrows: pan, wheel or +/-: integer zoom.</span>
-    </header>
-    <section id="light-tools" aria-label="Lighting">
-      <label>lighting
-        <select id="light-mode">
-          <option value="off">off</option>
-          <option value="smooth" selected>smooth</option>
-          <option value="authentic">authentic</option>
+    <div id="app">
+      <header id="bar" role="toolbar" aria-label="d2-webgpu controls">
+        <button id="brand" type="button" aria-expanded="false" aria-controls="about">d2-webgpu</button>
+
+        <button id="pick" type="button">Open game folder&hellip;</button>
+        <label id="folder-label" class="btn" title="Fallback for browsers without the File System Access API">Open game folder&hellip;
+          <input id="folder" type="file" webkitdirectory multiple />
+        </label>
+        <button id="regrant" type="button" class="primary" hidden>Reconnect saved folder</button>
+
+        <select id="mode" aria-label="Mode">
+          <option value="play">Play</option>
+          <option value="demo" selected>Demo</option>
+          <option value="view">Viewer</option>
+          <option value="map">Map</option>
         </select>
-      </label>
-      <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" value="0.16" /> <output id="ambient-val">0.16</output></label>
-    </section>
-    <section id="tools" aria-label="Game files">
-      <button id="pick" type="button">Open game folder&hellip;</button>
-      <button id="regrant" type="button" hidden>Reconnect saved folder</button>
-      <label id="folder-label" title="Fallback for browsers without the File System Access API">or pick a folder:
-        <input id="folder" type="file" webkitdirectory multiple />
-      </label>
-      <span id="game-status" role="status">No game folder: showing the synthetic demo. Files stay in your browser.</span>
-      <div id="game-tools" hidden>
-        <button id="play-btn" type="button" title="Run the full game (needs d2full.wasm)">Play</button>
-        <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
-        <label>path <input id="path" type="text" list="known-paths" spellcheck="false" autocomplete="off" /></label>
-        <datalist id="known-paths"></datalist>
-        <label>palette <input id="pal" type="text" list="known-pals" spellcheck="false" autocomplete="off" /></label>
-        <datalist id="known-pals"></datalist>
-        <label><input id="mosaic" type="checkbox" /> all frames</label>
-        <label>dir <input id="dir" type="number" min="0" value="0" /></label>
-        <button id="view-btn" type="button">View DC6</button>
-        <button id="map-btn" type="button">Load map</button>
-        <button id="demo-btn" type="button">Demo</button>
-      </div>
-    </section>
-    <main>
-      <canvas id="view" aria-label="Scene"></canvas>
-      <div id="nogpu" role="alert"><div>
-        <h2>WebGPU is not available</h2>
-        <p id="nogpu-reason"></p>
-        <p>Use a recent Chromium-based browser (Chrome/Edge 113+) with WebGPU enabled.</p>
-      </div></div>
-      <pre id="debug" aria-label="Debug panel">initialising...</pre>
-    </main>
-    <footer id="about">
-      GPL-3.0-or-later &mdash; source: <a id="src-link" href="#" rel="noopener"></a>
-      &mdash; commit <code id="commit"></code> &mdash; upstream d2decomped 7e730f0.
-      No Blizzard data is included; you provide your own Diablo II files and they never leave your browser.
-    </footer>
+        <button id="play-btn" type="button" hidden title="Run the full game (needs d2full.wasm)">Play</button>
+        <button id="tools-btn" type="button" aria-label="Mode tools" title="Mode tools" aria-expanded="false" aria-controls="game-tools">&#9881;</button>
+
+        <span id="game-status" role="status" aria-live="polite">No game folder yet. Open a folder or drop it here.</span>
+
+        <select id="present" aria-label="Upscaling"></select>
+        <input id="sharp" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="FSR sharpness" title="RCAS sharpness (0 sharpest)" />
+        <button id="fs-btn" type="button" aria-label="Fullscreen" title="Fullscreen (F11, Alt+Enter)" aria-pressed="false">&#9974;</button>
+        <button id="debug-btn" type="button" aria-label="Debug overlay" title="Debug overlay (F9)" aria-pressed="false">{}</button>
+        <button id="pin-btn" type="button" aria-label="Keep the bar visible" title="Keep the bar visible" aria-pressed="false" hidden>pin</button>
+
+        <div id="progress" role="progressbar" aria-hidden="true" hidden><div class="fill"></div></div>
+
+        <section id="game-tools" class="popover" hidden aria-label="Mode tools">
+          <div class="row"><label>path <input id="path" type="text" list="known-paths" spellcheck="false" autocomplete="off" /></label><datalist id="known-paths"></datalist></div>
+          <div class="row">
+            <label>palette <input id="pal" type="text" list="known-pals" spellcheck="false" autocomplete="off" /></label><datalist id="known-pals"></datalist>
+            <label>dir <input id="dir" type="number" min="0" value="0" /></label>
+            <label><input id="mosaic" type="checkbox" /> all frames</label>
+          </div>
+          <div class="row">
+            <button id="view-btn" type="button">View DC6</button>
+            <button id="map-btn" type="button">Load map</button>
+            <button id="demo-btn" type="button">Demo</button>
+          </div>
+          <div class="row" id="light-tools">
+            <label>lighting
+              <select id="light-mode">
+                <option value="off">off</option>
+                <option value="smooth" selected>smooth</option>
+                <option value="authentic">authentic</option>
+              </select>
+            </label>
+            <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" value="0.16" /> <output id="ambient-val">0.16</output></label>
+          </div>
+          <div class="row">
+            <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
+            <label><input id="autoplay" type="checkbox" checked /> start the game after picking files</label>
+            <label><input id="hotkeys" type="checkbox" checked /> F9&ndash;F11 for the page (debug, bar, fullscreen)</label>
+          </div>
+        </section>
+        <section id="about" class="popover" hidden>
+          GPL-3.0-or-later &mdash; source: <a id="src-link" href="#" rel="noopener"></a> &mdash; commit <code id="commit"></code>
+          &mdash; upstream d2decomped 7e730f0. No Blizzard data is included; you provide your own Diablo II files and they never leave your browser.
+          Upscaling: AMD FidelityFX Super Resolution 1.0 (EASU + RCAS), MIT, see LICENSES/.
+        </section>
+      </header>
+
+      <main id="stage">
+        <canvas id="view" aria-label="Scene" tabindex="0"></canvas>
+        <div id="drop" class="overlay" hidden><div class="card">Drop your Diablo II folder here</div></div>
+        <div id="nogpu" class="overlay" role="alert" hidden><div class="card">
+          <h2>WebGPU is not available</h2>
+          <p id="nogpu-reason"></p>
+          <p>Use a recent Chromium-based browser (Chrome/Edge 113+) with WebGPU enabled.</p>
+        </div></div>
+        <div id="mpq-missing" class="overlay" role="alertdialog" aria-labelledby="mpq-missing-title" hidden><div class="card">
+          <h2 id="mpq-missing-title">Missing game archives</h2>
+          <p id="mpq-missing-list"></p>
+          <p id="mpq-found-list" class="dim"></p>
+          <div class="actions"><button id="mpq-retry" type="button" class="primary">Choose another folder&hellip;</button><button id="mpq-continue" type="button">Continue anyway</button></div>
+        </div></div>
+        <div id="game-failed" class="overlay" role="alertdialog" aria-labelledby="game-failed-title" hidden><div class="card">
+          <h2 id="game-failed-title">The game stopped</h2>
+          <p id="game-failed-reason"></p>
+          <div class="actions">
+            <button id="game-restart" type="button" class="primary">Restart</button>
+            <button id="game-copylog" type="button">Copy log</button>
+            <button id="game-details" type="button">Details</button>
+            <button id="game-demo" type="button">Back to demo</button>
+          </div>
+        </div></div>
+        <pre id="debug" aria-label="Debug panel" hidden>initialising...</pre>
+      </main>
+    </div>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

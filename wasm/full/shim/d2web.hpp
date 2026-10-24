@@ -42,6 +42,9 @@ auto run_now_or_default(F&& f) -> std::future<std::invoke_result_t<F>> {
     } catch (const std::exception& e) {
         std::fprintf(stderr, "d2full: background job failed: %s\n", e.what());
         promise.set_value(R{});
+    } catch (...) {
+        std::fputs("d2full: background job failed: unknown exception\n", stderr);
+        promise.set_value(R{});
     }
     return promise.get_future();
 }
@@ -51,6 +54,8 @@ void pump_input();
 // Hands one RGBA frame (w*h*4 bytes at `rgba`) to the main thread (replaces
 // SDL_UpdateTexture + SDL_RenderPresent).
 void present(const void* rgba, int w, int h);
+// The in-game view width the page asked for (its canvas's aspect at 600 px height); 800 until it says.
+int view_width();
 // True while the page wants frames (mailbox); false = pause (hidden tab).
 bool frame_wanted();
 // Gives the Worker's event loop a turn for ~ms (emscripten_sleep: JSPI or Asyncify).

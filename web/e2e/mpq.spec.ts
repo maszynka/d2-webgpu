@@ -30,8 +30,20 @@ test('synthetic MPQ through the folder input and the DC6 viewer', async ({ page 
   expect(await page.evaluate(() => window.__d2?.core?.mode)).toBe('wasm');
 
   await page.setInputFiles('#folder', path.join(dir, 'Diablo II'));
-  await expect(page.locator('#game-tools')).toBeVisible();
   await expect(page.locator('#game-status')).toContainText('opened 1 MPQ');
+  // base.mpq is only d2data: the required archives are missing, Play is off, Viewer / Map still work after "Continue"
+  await expect(page.locator('#mpq-missing')).toBeVisible();
+  await expect(page.locator('#mpq-missing-list')).toContainText('d2exp.mpq');
+  await expect(page.locator('#mpq-found-list')).toContainText('D2DATA.MPQ');
+  await expect(page.locator('#progress')).toBeHidden();
+  expect(await page.evaluate(() => window.__d2?.ui?.state)).toBe('ready');
+  await expect(page.locator('#mode option[value=play]')).toBeDisabled();
+  await expect(page.locator('#mode option[value=view]')).toBeEnabled();
+  await page.click('#mpq-continue');
+  await expect(page.locator('#mpq-missing')).toBeHidden();
+  expect(await page.getAttribute('#mode', 'title')).toContain('d2exp.mpq');
+  await page.selectOption('#mode', 'view'); // opens the tools popover
+  await expect(page.locator('#game-tools')).toBeVisible();
 
   await page.fill('#path', 'data\\global\\ui\\tiny.dc6');
   await page.fill('#pal', 'data\\global\\palette\\pal.dat');

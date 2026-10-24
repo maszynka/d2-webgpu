@@ -58,6 +58,7 @@ struct Buffer {
     int channels = 1, bits = 16, rate = 22050;
     std::size_t frames = 0;
     int key_a = -1, key_b = 0;                    // JS cache key; a < 0: transient (b = buffer id)
+    bool on_page = false;                         // a transient copy exists in JS (nothing to free otherwise)
 };
 
 enum SourceState { kInitial = AL_INITIAL, kPlaying = AL_PLAYING, kPaused = AL_PAUSED, kStopped = AL_STOPPED };
@@ -126,7 +127,9 @@ void do_play(ALuint id) {
     Source* s = source(id);
     if (!s) return;
     refresh(*s);
-    const double from = s->state == kPaused ? s->start_frames : 0.0;   // paused resumes; the rest (re)start
+    // Playing restarts at 0 (AL semantics). Paused resumes, and an initial / stopped source starts at the offset
+    // alSourcei(AL_SAMPLE_OFFSET) left pending (start_frames; 0 after a stop or when the buffer ran out).
+    const double from = s->state == kPlaying ? 0.0 : std::max(0.0, s->start_frames);
     emit_play(id, *s, from);
 }
 
@@ -186,7 +189,7 @@ void alDeleteBuffers(ALsizei n, const ALuint* ids) {
     for (ALsizei i = 0; i < n; ++i) {
         const auto it = g_buffers.find(ids[i]);
         if (it == g_buffers.end()) continue;
-        if (it->second.key_a < 0) d2web_audio_free_js(it->second.key_a, it->second.key_b);
+        if (it->second.on_page) d2web_audio_free_js(it->second.key_a, it->second.key_b);   // never uploaded: nothing to free
         g_buffers.erase(it);
     }
 }
@@ -201,8 +204,9 @@ void alBufferData(ALuint id, ALenum format, const void* data, ALsizei size, ALsi
     const auto it = g_buffers.find(id);
     if (it == g_buffers.end() || size < 0) { g_error = 0xA001; return; }
     Buffer& b = it->second;
-    if (b.key_a < 0) d2web_audio_free_js(b.key_a, b.key_b);   // refilled: drop the old one-shot copy
+    if (b.on_page) d2web_audio_free_js(b.key_a, b.key_b);   // refilled: drop the old one-shot copy
     b = {};
+    if (freq <= 0) { g_error = 0xA003; return; }          // AL_INVALID_VALUE: a rate of 0 would divide by zero later
     switch (format) {
     case AL_FORMAT_MONO8: b.channels = 1; b.bits = 8; break;
     case AL_FORMAT_MONO16: b.channels = 1; b.bits = 16; break;
@@ -223,6 +227,7 @@ void alBufferData(ALuint id, ALenum format, const void* data, ALsizei size, ALsi
     } else {
         b.key_a = -1;
         b.key_b = int(id);
+        b.on_page = true;
         d2web_audio_buf_js(b.key_a, b.key_b, b.channels, b.rate, b.bits, p, int(bytes));
     }
 }

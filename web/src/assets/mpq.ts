@@ -16,6 +16,19 @@ export const MPQ_ORDER = [
   'patch_d2',
 ] as const;
 
+/**
+ * Archives the game cannot start without (upstream opens d2data unconditionally; d2exp, d2char and patch_d2 carry the
+ * LoD tables, the character animations and the 1.14d data). Every other archive is optional: without d2sfx / d2speech /
+ * d2music / d2video (and the x-variants) the game runs without that sound / video.
+ */
+export const REQUIRED_MPQS = ['d2data.mpq', 'd2exp.mpq', 'd2char.mpq', 'patch_d2.mpq'] as const;
+
+/** Missing archives (from MpqSelection.missing) that block Play, and the optional ones that only cost sound / video. */
+export function splitMissing(missing: readonly string[]): { required: string[]; optional: string[] } {
+  const req = REQUIRED_MPQS as readonly string[];
+  return { required: missing.filter((m) => req.includes(m)), optional: missing.filter((m) => !req.includes(m)) };
+}
+
 export interface NamedFile {
   name: string;
   webkitRelativePath?: string;

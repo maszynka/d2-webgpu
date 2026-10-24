@@ -61,7 +61,7 @@ void Channel::close() { impl_->on = false; }
 
 void Channel::pump() {
     if (!impl_->on) return;
-    static char line[4096];
+    char line[4096];   // local: pump() is not re-entered, but nothing else should share this buffer
     while (const int id = d2web_ctl_next_js(line, int(sizeof line))) {
         const auto tok = tokenize(line);
         std::string reply;

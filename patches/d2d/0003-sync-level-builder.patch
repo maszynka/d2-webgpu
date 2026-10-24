@@ -1,10 +1,6 @@
 SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0003: no builder thread: GameData::want_level queues the level (GameData::LevelBuilder::web_pending), poll_levels() builds one queued level per call inline as an already-ready future (so the neighbours of a new level hitch one by one, not all in a single frame), level() builds a queued level at once. The job is claimed in `jobs` before building (re-entrancy through want_nearby). Stage F4+: build in slices inside the DRLG.
 diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
-diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
-diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
-diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
-diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
 --- a/components/game/gamedata.cpp	2026-10-24 01:49:28
 +++ b/components/game/gamedata.cpp	2026-10-24 02:57:26
 @@ -2,6 +2,9 @@

@@ -7,11 +7,14 @@ import { AudioEngine, type ContextLike } from './audio';
 import { FrameMailbox, type FrameMessage } from './framepool';
 import { EV, modFlags, scancodeOf, sdlButton, shouldPreventDefault, textOf, toFramePixels, wheelRecordValue, type InputRecord } from './input';
 import type { FromWorker, ToWorker } from './protocol';
+import { VIEW_DEBOUNCE_MS, VIEW_STEP, viewWidthFor } from './viewsize';
 
 export interface FullGameHooks {
   onStatus(text: string, error?: boolean): void;
   onLog?(line: string): void;
   onExit?(code: number): void;
+  /** the worker crashed or reported an error: the game is stopped for good (the page offers Restart) */
+  onFail?(message: string): void;
 }
 
 export interface FullGameStats {
@@ -21,6 +24,8 @@ export interface FullGameStats {
   heapMiB: number;
   width: number;
   height: number;
+  /** in-game view width asked of the game from the display's aspect (the frame width follows on in-game screens; menus stay 800) */
+  viewWidth: number;
   status: string;
   exited: number | null;
   logs: string[];
@@ -47,7 +52,7 @@ export interface PerfSample {
 }
 
 export class FullGame {
-  readonly stats: FullGameStats = { frames: 0, shown: 0, dropped: 0, heapMiB: 0, width: 800, height: 600, status: 'starting', exited: null, logs: [], audioMessages: 0, audioOps: 0, audioVoices: 0, audioState: 'none', synced: 0 };
+  readonly stats: FullGameStats = { frames: 0, shown: 0, dropped: 0, heapMiB: 0, width: 800, height: 600, viewWidth: 800, status: 'starting', exited: null, logs: [], audioMessages: 0, audioOps: 0, audioVoices: 0, audioState: 'none', synced: 0 };
   private worker: Worker | null;
   private readonly mailbox: FrameMailbox;
   private pendingInput: InputRecord[] = [];
@@ -72,8 +77,53 @@ export class FullGame {
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.onMessage(e.data);
     this.worker.onerror = (e) => this.fail(e.message || 'game worker crashed');
     this.setupAudio();
-    this.send({ t: 'start', files, baseUrl, args });
+    this.stats.viewWidth = this.displayViewWidth();
+    this.send({ t: 'start', files, baseUrl, args, viewWidth: this.stats.viewWidth });
     this.attachInput();
+    this.watchSize();
+  }
+
+  private displayViewWidth(): number {
+    return viewWidthFor(this.canvas.clientWidth, this.canvas.clientHeight);
+  }
+
+  private viewTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Re-derive the game's view width from the canvas's current shape and tell the game when it changed. Resizes are
+   * debounced and ignore changes under VIEW_STEP px; `immediate` (fullscreen enter / exit) applies at once.
+   */
+  updateView(immediate = false): void {
+    if (this.viewTimer) clearTimeout(this.viewTimer);
+    this.viewTimer = null;
+    const apply = (): void => {
+      this.viewTimer = null;
+      const w = this.displayViewWidth();
+      if (w === this.stats.viewWidth) return;
+      if (!immediate && Math.abs(w - this.stats.viewWidth) < VIEW_STEP && w !== 800 && w !== 1400) return;
+      this.stats.viewWidth = w;
+      this.send({ t: 'view', width: w });
+    };
+    if (immediate) apply();
+    else this.viewTimer = setTimeout(apply, VIEW_DEBOUNCE_MS);
+  }
+
+  /** Window resize, fullscreen enter/exit, layout changes: all change the canvas box. */
+  private watchSize(): void {
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => this.updateView());
+      ro.observe(this.canvas);
+      this.cleanup.push(() => ro.disconnect());
+    }
+    const on = () => this.updateView();
+    window.addEventListener('resize', on);
+    const fs = () => this.updateView(true);
+    document.addEventListener('fullscreenchange', fs);
+    this.cleanup.push(() => {
+      window.removeEventListener('resize', on);
+      document.removeEventListener('fullscreenchange', fs);
+      if (this.viewTimer) clearTimeout(this.viewTimer);
+    });
   }
 
   private send(msg: ToWorker, transfer: Transferable[] = []): void {
@@ -124,6 +174,7 @@ export class FullGame {
   private fail(message: string): void {
     this.stats.status = `error: ${message}`;
     this.hooks.onStatus(`Game failed: ${message}`, true);
+    this.hooks.onFail?.(message);
   }
 
   private onFrame(m: FrameMessage): void {
@@ -329,6 +380,12 @@ export class FullGame {
     for (const f of this.cleanup.splice(0)) f();
     const w = this.worker;
     if (!w) return;
+    if (this.stats.exited !== null) {
+      // the game already quit and its exit-time write finished (worker: onExit): nothing to wait for
+      this.worker = null;
+      w.terminate();
+      return;
+    }
     const done = new Promise<void>((resolve) => this.flushedResolvers.push(resolve));
     this.send({ t: 'stop' });
     await Promise.race([done, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
