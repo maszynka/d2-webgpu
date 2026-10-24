@@ -60,6 +60,21 @@ int view_width();
 bool frame_wanted();
 // Gives the Worker's event loop a turn for ~ms (emscripten_sleep: JSPI or Asyncify).
 void yield(int ms);
+// UI rect recorder (patches/d2d/0014-ui-rects.patch): the page draws menus / HUD / panels with its UI scaler.
+// ui_frame_begin: a new in-game frame (clears the list). ui_begin / ui_end: the UI window (after the world is composed):
+// while open, ui_note(x, y, w, h) records a rect in UI space (shifted by ui_offset into frame space).
+// ui_add_abs: a rect in frame coordinates, recorded any time after ui_frame_begin. ui_screen: 0 menu, 1 in game, 2 video.
+// present() merges the rects (<= kUiMaxRects) and sends them with the screen id as the frame's trailer.
+inline constexpr int kUiMaxRects = 64;
+extern bool g_ui_rec;
+void ui_add(int x, int y, int w, int h);
+inline void ui_note(int x, int y, int w, int h) { if (g_ui_rec) ui_add(x, y, w, h); }
+void ui_add_abs(int x, int y, int w, int h);
+void ui_frame_begin();
+void ui_begin();
+void ui_end();
+void ui_offset(int dx);
+void ui_screen(int id);
 // Posts the frame's batched audio commands to the page (d2web_audio.cpp).
 void audio_flush();
 // A character save has just been written (character_store.hpp): the page flushes IndexedDB now.

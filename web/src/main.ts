@@ -15,6 +15,8 @@ import { Bar, type BarState } from './ui/bar';
 import { bindLightControls } from './ui/lightui';
 import { FullscreenController } from './ui/fullscreen';
 import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui/panel';
+import type { UiInfo as UiFrameInfo } from './full/uitrailer';
+import { registerFakeStage } from './gpu/fakestage';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
 import { bindDivider } from './ui/divider';
 import { bindLoupe } from './ui/loupe';
@@ -30,7 +32,7 @@ export interface UiInfo {
   bar: BarState;
   fullscreen: boolean;
   native: { w: number; h: number };
-  present: { mode: string; sharpness: number };
+  present: { mode: string; sharpness: number; ui: string; density: string };
   compare: { on: boolean; a: string; b: string; split: number };
   loupe: { on: boolean; zoom: number; source: boolean; size: number };
   hud: boolean;
@@ -53,6 +55,11 @@ declare global {
       ui?: UiInfo;
       /** test hook: stop rendering new scene frames (the present path still repaints on setting changes) */
       paused?: boolean;
+      /** test hooks: texture counters (leak tests), a synthetic UI info for the demo, a fake 2x stage */
+      textures?: () => ReturnType<Renderer['textureStats']>;
+      setUi?: (info: UiFrameInfo | null) => void;
+      getUi?: () => UiFrameInfo | null;
+      registerFakeStage?: (mode?: string) => void;
     };
   }
 }
@@ -239,6 +246,12 @@ async function main(): Promise<void> {
       get sharpness() {
         return presentCtl.sharpness;
       },
+      get ui() {
+        return presentCtl.ui;
+      },
+      get density() {
+        return presentCtl.density;
+      },
     },
     compare: presentCtl.compare,
     loupe: loupeCtl,
@@ -250,6 +263,10 @@ async function main(): Promise<void> {
     },
   };
   state.ui = uiInfo;
+  state.textures = () => renderer.textureStats();
+  state.setUi = (info) => renderer.setUi(info);
+  state.getUi = () => renderer.currentUi;
+  state.registerFakeStage = (mode) => registerFakeStage(mode);
 
   // --- fullscreen (the whole app, so the bar and the cards come along) and the bar's overlay mode ----------
   const fsBtn = $<HTMLButtonElement>('fs-btn');
@@ -594,7 +611,7 @@ async function main(): Promise<void> {
   canvas.addEventListener('pointerup', () => (drag = null));
   canvas.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = renderer.effectiveDpr; // backing px per CSS px actually rendered (render density 1x: 1)
     const r = renderer.lastRect; // where the scene sits on the canvas now (any presentation mode)
     const k = (r.w / renderer.sceneW) / dpr; // CSS px per scene px
     camera.panByScreen((e.clientX - drag.x) / k, (e.clientY - drag.y) / k);

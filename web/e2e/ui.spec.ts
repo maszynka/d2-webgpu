@@ -97,7 +97,7 @@ test('presentation controls apply and survive a reload', async ({ page }) => {
   expect(await page.evaluate(() => window.__d2?.ui?.present.sharpness)).toBe(1);
   await page.reload();
   await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
-  expect(await page.evaluate(() => window.__d2?.ui?.present)).toEqual({ mode: 'fsr1', sharpness: 1 });
+  expect(await page.evaluate(() => window.__d2?.ui?.present)).toEqual({ mode: 'fsr1', sharpness: 1, ui: 'sharp', density: 'auto' });
   await page.selectOption('#present', 'bilinear');
   await page.reload();
   await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
@@ -105,7 +105,7 @@ test('presentation controls apply and survive a reload', async ({ page }) => {
   // the URL wins for that load and is not written back
   await page.goto('/?present=nearest&sharp=0.5');
   await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
-  expect(await page.evaluate(() => window.__d2?.ui?.present)).toEqual({ mode: 'nearest', sharpness: 0.5 });
+  expect(await page.evaluate(() => window.__d2?.ui?.present)).toEqual({ mode: 'nearest', sharpness: 0.5, ui: 'sharp', density: 'auto' });
   await page.goto('/');
   await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
   expect(await page.evaluate(() => window.__d2?.ui?.present.mode)).toBe('bilinear');

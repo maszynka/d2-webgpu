@@ -1,0 +1,137 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0014: UI rects for the page's menu/HUD scaler. Once the world is composed (render_ingame, after the widescreen copy) d2web::ui_begin() opens a UI window; blit_sprite and Font::draw_tinted (plus tooltip / chat boxes, and the world labels' boxes via ui_add_abs) record their bounding rects into d2web's recorder until Town::draw ends it (ui_end); d2web::present merges them (<= 64) and sends them with the screen id (menu / in game / video, ui_screen at both present sites of main.cpp) as a trailer of the frame buffer. Town::draw shifts the rects by the widescreen offset (ui_offset).
+
+diff -ru a/apps/d2d/common.cpp b/apps/d2d/common.cpp
+--- a/apps/d2d/common.cpp	2026-10-24 17:58:22
++++ b/apps/d2d/common.cpp	2026-10-24 17:58:39
+@@ -18,6 +18,9 @@
+                  const d2d::palette::Palette& pal,
+                  int dst_x, int dst_y, int shade) {
+     const int screen_w = fb_width(framebuffer);
++#ifdef D2WEB
++    d2web::ui_note(dst_x, dst_y, int(frame.width), int(frame.height));   // inside the UI window: a UI rect
++#endif
+     for (std::uint32_t y = 0; y < frame.height; ++y) {
+         const int dy = dst_y + int(y);
+         if (dy < 0 || dy >= int(kScreenHeight)) continue;
+diff -ru a/apps/d2d/ingame.cpp b/apps/d2d/ingame.cpp
+--- a/apps/d2d/ingame.cpp	2026-10-24 17:58:22
++++ b/apps/d2d/ingame.cpp	2026-10-24 17:58:39
+@@ -190,6 +190,9 @@
+         // A box under a label (FUN_004f6300): `rgb` at draw mode 1 (half,
+         // over black), 2 (a quarter of the colour kept) or 5 (solid).
+         auto fill = [&](const std::array<int, 4>& rect, int mode, std::array<std::uint8_t, 3> rgb) {
++#ifdef D2WEB
++            d2web::ui_add_abs(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);   // a label's box over the world (frame coordinates)
++#endif
+             for (int y = std::max(rect[1], 0); y < std::min(rect[3], int(kScreenHeight)); ++y)
+                 for (int x = std::max(rect[0], 0); x < std::min(rect[2], world_w); ++x) {
+                     auto* pixel = &world[(std::size_t(y) * std::size_t(world_w) + std::size_t(x)) * 4];
+@@ -255,6 +258,9 @@
+             for (std::size_t y = 0; y < kScreenHeight; ++y)
+                 std::copy_n(world.begin() + std::ptrdiff_t((y * std::size_t(world_w) + std::size_t(off)) * 4), kScreenWidth * 4,
+                             framebuffer.begin() + std::ptrdiff_t(y * kScreenWidth * 4));
++#ifdef D2WEB
++        d2web::ui_begin();   // from here on: HUD, panels, tooltips, menus = UI (rects recorded by the blit / font primitives)
++#endif
+         // Who reads the hover text: red requirements, class lines, attack speed.
+         std::optional<d2d::rules::Wearer> wearer_value;
+         if (inventory && hud_stats && class_idx >= 0 && class_idx < 7) wearer_value = d2d::game::wearer(scene, kUiToSaveClass[class_idx], *inventory, *hud_stats);
+diff -ru a/apps/d2d/items.cpp b/apps/d2d/items.cpp
+--- a/apps/d2d/items.cpp	2026-10-24 17:58:22
++++ b/apps/d2d/items.cpp	2026-10-24 17:58:39
+@@ -24,6 +24,9 @@
+     int box_x = std::clamp((left + right) / 2 - width / 2 - 2, 0, std::max(0, int(kScreenWidth) - width - 4));
+     int box_y = bottom - height - 2;
+     if (box_y < 0) box_y = std::min(top, int(kScreenHeight) - height - 4);
++#ifdef D2WEB
++    d2web::ui_note(box_x, box_y, width + 4, height + 4);   // the tooltip's dark box
++#endif
+     for (int y = std::max(0, box_y); y < std::min(int(kScreenHeight), box_y + height + 4); ++y)
+         for (int x = box_x; x < std::min(int(kScreenWidth), box_x + width + 4); ++x) {
+             auto* pixel = &framebuffer[(std::size_t(y) * kScreenWidth + std::size_t(x)) * 4];
+diff -ru a/apps/d2d/main.cpp b/apps/d2d/main.cpp
+--- a/apps/d2d/main.cpp	2026-10-24 17:58:22
++++ b/apps/d2d/main.cpp	2026-10-24 17:58:39
+@@ -495,6 +495,7 @@
+         while (SDL_PollEvent(&event)) if (event.type == SDL_EVENT_QUIT) quit = true;
+         if (boot_title) render_title(framebuffer, *scene, boot_title->buttons, std::uint32_t(SDL_GetTicks()));
+ #ifdef D2WEB
++        d2web::ui_screen(0);   // the boot title: a menu
+         d2web::present(framebuffer.data(), int(kScreenWidth), int(kScreenHeight));
+ #else
+         SDL_UpdateTexture(win.texture, nullptr, framebuffer.data(), int(kScreenWidth * 4));
+@@ -1430,7 +1431,9 @@
+             current_phase.store(std::uint32_t(MainPhase::Upload),
+                                 std::memory_order_relaxed);
+ #ifdef D2WEB
+-            // Our WebGPU blit presents the frame: the RGBA buffer goes to the main thread.
++            // Our WebGPU blit presents the frame: the RGBA buffer goes to the main thread, with the screen id and
++            // the UI rects of this frame (menus / HUD / panels get the page's UI scaler).
++            d2web::ui_screen(screen == Screen::InGame ? 1 : screen == Screen::Video ? 2 : 0);
+             d2web::present(framebuffer.data(), fb_width(framebuffer), int(kScreenHeight));
+ #else
+             SDL_UpdateTexture(win.texture, nullptr, framebuffer.data(), fb_width(framebuffer) * 4);
+diff -ru a/apps/d2d/town.cpp b/apps/d2d/town.cpp
+--- a/apps/d2d/town.cpp	2026-10-24 17:58:22
++++ b/apps/d2d/town.cpp	2026-10-24 17:58:39
+@@ -2806,10 +2806,25 @@
+ // and everything else into its centre 800x600, as it always did.
+ auto Town::draw(std::vector<std::uint8_t>& framebuffer, const Mouse& mouse, std::uint32_t frame_ms) -> void {
+     const int screen_w = fb_width(framebuffer);
+-    if (screen_w == int(kScreenWidth)) return draw_view(framebuffer, nullptr, mouse, frame_ms);
++#ifdef D2WEB
++    d2web::ui_frame_begin();   // the page's UI mask: render_ingame opens the UI window once the world is done
++#endif
++    if (screen_w == int(kScreenWidth)) {
++        draw_view(framebuffer, nullptr, mouse, frame_ms);
++#ifdef D2WEB
++        d2web::ui_end();
++#endif
++        return;
++    }
+     const int off = (screen_w - int(kScreenWidth)) / 2;
+     ui_buffer.resize(std::size_t(kScreenWidth) * kScreenHeight * 4);
++#ifdef D2WEB
++    d2web::ui_offset(off);   // the UI draws into the centre 800x600: its rects are shifted into the frame
++#endif
+     draw_view(ui_buffer, &framebuffer, mouse, frame_ms);
++#ifdef D2WEB
++    d2web::ui_end();
++#endif
+     for (std::size_t y = 0; y < kScreenHeight; ++y)
+         std::copy_n(ui_buffer.begin() + std::ptrdiff_t(y * kScreenWidth * 4), kScreenWidth * 4,
+                     framebuffer.begin() + std::ptrdiff_t((y * std::size_t(screen_w) + std::size_t(off)) * 4));
+@@ -3045,6 +3060,9 @@
+     static constexpr std::array<std::array<std::uint8_t, 3>, 10> kRgb{ { { 255, 255, 255 }, { 255, 77, 77 }, { 0, 255, 0 }, { 105, 105, 255 }, { 199, 179, 119 },
+                                                                           { 105, 105, 105 }, { 255, 255, 255 }, { 255, 255, 255 }, { 255, 168, 0 }, { 255, 255, 100 } } };
+     auto darken = [&](int left, int top, int width, int height) {   // FUN_0046efd0 colour 0, mode 1
++#ifdef D2WEB
++        d2web::ui_note(left, top, width, height);
++#endif
+         for (int y = std::max(top, 0); y < std::min(top + height, int(kScreenHeight)); ++y)
+             for (int column = std::max(left, 0); column < std::min(left + width, int(kScreenWidth)); ++column)
+                 for (int channel = 0; channel < 3; ++channel) {
+diff -ru a/components/font/font.hpp b/components/font/font.hpp
+--- a/components/font/font.hpp	2026-10-24 17:58:22
++++ b/components/font/font.hpp	2026-10-24 17:58:39
+@@ -94,6 +94,9 @@
+                     int x, int y, std::string_view text,
+                     std::uint8_t tint_red, std::uint8_t tint_green, std::uint8_t tint_blue,
+                     int clip_y0 = 0, int clip_y1 = 1 << 30) const {
++#ifdef D2WEB
++        const int note_x = x;   // the text's box is a UI rect while the page records them (d2web::ui_note)
++#endif
+         for (unsigned char letter : text) {
+             const auto* glyph = find(letter);
+             if (!glyph) continue;
+@@ -101,6 +104,9 @@
+             blit_glyph_tinted(framebuffer, fbW, fbH, pal, frame, x, y, tint_red, tint_green, tint_blue, clip_y0, clip_y1);
+             x += glyph->width;
+         }
++#ifdef D2WEB
++        d2web::ui_note(note_x, y, x - note_x, line_height_);
++#endif
+         return x;
+     }
+ 

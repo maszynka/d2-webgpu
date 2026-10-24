@@ -7,6 +7,8 @@ import { readStored, writeStored } from './present';
 
 interface Target {
   setLoupe(l: Partial<LoupeState>): void;
+  /** backing pixels per CSS pixel in use (render density 1x makes it 1) */
+  readonly effectiveDpr?: number;
 }
 
 export interface LoupeControls {
@@ -39,7 +41,7 @@ export function bindLoupe(target: Target, canvas: HTMLCanvasElement, params: URL
   let py = 0;
   let inside = false;
   const push = (): void => {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = target.effectiveDpr ?? (window.devicePixelRatio || 1);
     target.setLoupe({ on: c.on, visible: c.on && inside, x: px, y: py, zoom: c.zoom, size: Math.round(c.size * dpr), source: c.source });
   };
   function apply(): void {

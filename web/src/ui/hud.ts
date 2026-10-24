@@ -31,6 +31,14 @@ export function gpuLine(p: PresentInfo): string {
   return parts.map((x) => `${x.side === 0 ? 'A' : 'B'} ${f(x)}`).join(' / ');
 }
 
+/** One line per timed pass group: stage passes, EASU / RCAS, UI. */
+export function gpuLines(p: PresentInfo): string[] {
+  const parts = p.gpuParts ?? [];
+  if (parts.length <= 1 || p.compare) return [gpuLine(p)];
+  const total = parts.reduce((a, x) => a + x.ms, 0);
+  return [`gpu ${total.toFixed(2)} ms`, ...parts.map((x) => `  ${x.label} ${x.ms.toFixed(2)} ms`)];
+}
+
 export function formatHud(s: HudSample): string {
   const p = s.info;
   const lines: string[] = [];
@@ -38,10 +46,13 @@ export function formatHud(s: HudSample): string {
   if (!p) return `${lines[0]}\nno frame yet`;
   const scale = p.rect.w / p.srcW;
   lines.push(`source ${p.srcW}x${p.srcH}`);
-  lines.push(`output ${p.canvasW}x${p.canvasH} px  frame ${p.rect.w}x${p.rect.h}  x${scale.toFixed(2)}  dpr ${s.dpr}`);
+  const eff = p.dprEffective;
+  lines.push(`output ${p.canvasW}x${p.canvasH} px  frame ${p.rect.w}x${p.rect.h}  x${scale.toFixed(2)}  dpr ${s.dpr}${Math.abs(eff - s.dpr) > 0.01 ? ` (render ${eff.toFixed(2)}, density ${p.density})` : ''}`);
   if (p.compare) lines.push(`A ${presentLabel(p.compare.a)} (${p.compare.passA}${p.compare.prescaleA > 1 ? `, ${p.compare.prescaleA}x pre` : ''}) | B ${presentLabel(p.compare.b)} (${p.compare.passB}${p.compare.prescaleB > 1 ? `, ${p.compare.prescaleB}x pre` : ''})  split ${p.compare.splitPx}px`);
   else lines.push(`mode ${presentLabel(p.mode)} (${p.pass}${p.prescale > 1 ? `, ${p.prescale}x nearest prescale` : ''})`);
-  lines.push(gpuLine(p));
+  if (p.stage) lines.push(`stage ${p.stage}`);
+  lines.push(`menus/HUD ${p.ui.scaler}${p.ui.applied ? ` (${p.ui.kind === 'all' ? 'whole frame' : `${p.ui.rects} rects`})` : p.ui.scaler === 'world' ? '' : ' (none this frame)'}${p.ui.screen === null ? '' : `  screen ${['menu', 'game', 'video'][p.ui.screen] ?? p.ui.screen}`}`);
+  lines.push(...gpuLines(p));
   return lines.join('\n');
 }
 

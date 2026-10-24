@@ -9,9 +9,9 @@ import { formatHud, presentSummary, RateMeter } from '../ui/hud';
 
 describe('present modes', () => {
   it('parses every ?present= value and falls back to fsr1', () => {
-    for (const id of ['fsr1', 'fsr1-pixel', 'easu', 'bilinear', 'nearest', 'nearest-stretch', 'native']) expect(parsePresentMode(id)).toBe(id);
+    for (const id of ['fsr1', 'fsr1-pixel', 'easu', 'bilinear', 'nearest', 'nearest-stretch', 'native', 'smooth', 'smooth-scalefx', 'smooth-sxbr', 'fsrcnnx']) expect(parsePresentMode(id)).toBe(id);
     expect(parsePresentMode('nope')).toBe('fsr1');
-    expect(PRESENT_MODES.map((m) => m.id)).toEqual(['fsr1', 'fsr1-pixel', 'easu', 'bilinear', 'nearest', 'nearest-stretch', 'native']);
+    expect(PRESENT_MODES.map((m) => m.id)).toEqual(['fsr1', 'fsr1-pixel', 'smooth', 'smooth-scalefx', 'smooth-sxbr', 'fsrcnnx', 'easu', 'bilinear', 'nearest', 'nearest-stretch', 'native']);
     expect(presentLabel('native')).toBe('Off (1:1)');
     expect(presentLabel('nearest-stretch')).toBe('Nearest (stretch)');
   });
@@ -156,7 +156,7 @@ describe('loupe', () => {
 });
 
 describe('HUD', () => {
-  const info = { mode: 'fsr1', pass: 'easu-rcas', srcW: 1066, srcH: 600, canvasW: 1920, canvasH: 1080, rect: { x: 0, y: 0, w: 1919, h: 1080 }, gpuMs: 0.5, gpuParts: [{ side: 0, label: 'EASU+RCAS', ms: 0.5 }], chains: 1, compare: null, loupe: null, prescale: 1 } as const;
+  const info = { mode: 'fsr1', pass: 'easu-rcas', srcW: 1066, srcH: 600, canvasW: 1920, canvasH: 1080, rect: { x: 0, y: 0, w: 1919, h: 1080 }, gpuMs: 0.5, gpuParts: [{ side: 0, label: 'EASU+RCAS', ms: 0.5 }], chains: 1, compare: null, loupe: null, prescale: 1, stage: null, ui: { scaler: 'sharp', screen: 1, kind: 'rects', rects: 7, applied: true }, density: 'auto', dprEffective: 2 } as const;
   it('shows fps, resolutions, scale and mode', () => {
     const t = formatHud({ fps: 59.96, gameFps: 29.7, info: info as never, dpr: 2 });
     expect(t).toContain('60.0 fps');
@@ -178,6 +178,16 @@ describe('HUD', () => {
     const parts = [{ side: 0, label: 'EASU', ms: 0.2 }, { side: 1, label: 'prescale+EASU+RCAS', ms: 0.9 }];
     const t = formatHud({ fps: 1, gameFps: null, info: { ...info, gpuMs: 1.1, gpuParts: parts, compare: cmp } as never, dpr: 1 });
     expect(t).toContain('A gpu 0.20 ms (EASU) / B gpu 0.90 ms (prescale+EASU+RCAS)');
+  });
+  it('lists the stage passes, the menus/HUD scaler and the render density', () => {
+    const parts = [{ side: 0, label: 'smooth-sxbr: pass 1', ms: 0.4 }, { side: 0, label: 'smooth-sxbr: EASU', ms: 0.9 }, { side: 2, label: 'UI', ms: 0.1 }];
+    const t = formatHud({ fps: 1, gameFps: null, info: { ...info, stage: 'smooth-sxbr', gpuMs: 1.4, gpuParts: parts, dprEffective: 1, density: '1', ui: { scaler: 'sharp', screen: 0, kind: 'all', rects: 0, applied: true } } as never, dpr: 2 });
+    expect(t).toContain('stage smooth-sxbr');
+    expect(t).toContain('gpu 1.40 ms');
+    expect(t).toContain('  smooth-sxbr: pass 1 0.40 ms');
+    expect(t).toContain('  UI 0.10 ms');
+    expect(t).toContain('dpr 2 (render 1.00, density 1)');
+    expect(t).toContain('menus/HUD sharp (whole frame)  screen menu');
   });
   it('rate meter smooths a counter', () => {
     const m = new RateMeter();
