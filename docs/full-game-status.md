@@ -139,3 +139,18 @@ Wybór i ostrość zapamiętuje localStorage; `?present=`/`?sharp=` działają t
 * Dedither domyślnie włączony; checkbox „De-dither” (`?dedither=0`, `localStorage d2.dedither`) jest globalny.
 * Strony testowe GPU (`web/test-pages/`) nie są wejściami buildu: ich specyfikacje startują własny serwer vite (porty 5198/5199), więc `web/dist` ich nie zawiera (sprawdzone `ls web/dist` po buildzie jak w `scripts/deploy.sh`; wagi `fsrcnnx-8-0-4-1.bin` są w dist celowo).
 * Obóz na prawdziwych danych, DPR 2 (SwiftShader, CPU, czasy nie są reprezentatywne dla GPU): fsr1 EASU+RCAS 95 ms; smooth-scalefx 1,36 s (p3 580 ms); smooth-sxbr 230 ms; fsrcnnx 188 ms łącznie. Zrzuty `up-int-*.png`. Dedither zmiękcza drobne, 1-pikselowe źdźbła trawy i cienkie linie (siatka namiotu) - łagodnie, bez utraty czytelnych kształtów; wyłączalny przełącznikiem. fsrcnnx daje wyraźnie ciemniejszy i mniej nasycony obraz trawy niż pozostałe tryby (do oceny wzrokowej na prawdziwej karcie).
+
+### Pomiar na prawdziwym GPU (Apple Metal, Chrome, DPR 2, 3200x1800, obóz, klatka 1066x600, 2026-10-24)
+
+Mediana `present.gpuMs` z 20 próbek (timestamp-query; na Metal czasy przebiegów mogą się nakładać, więc to górna granica), FPS z `perf()`:
+
+| tryb | GPU ms | FPS |
+|---|---|---|
+| bilinear | 0,9 | 33,6 |
+| fsr1 (EASU+RCAS 6,9 + UI 4,2) | 11,4 | 34,8 |
+| smooth (→ scalefx przy 3x) | 13,5 | 35,6 |
+| smooth-scalefx | 13,7 | 35,0 |
+| smooth-sxbr | 30,2 | 34,8 |
+| fsrcnnx | 46,4 | 32,9 |
+
+FPS nie zależy od trybu (wąskim gardłem jest gra w WASM), więc nawet FSRCNNX mieści się w potoku. Przebieg UI (sharp bilinear, maska r8) kosztuje ~4 ms przy 3200x1800. Wszystkie tryby renderują poprawnie, bez błędów walidacji. Zrzuty: scratchpad sesji, `bench2/ingame-*.png`.
