@@ -15,7 +15,10 @@ import { Bar, type BarState } from './ui/bar';
 import { bindLightControls } from './ui/lightui';
 import { FullscreenController } from './ui/fullscreen';
 import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui/panel';
-import { bindPresentControls } from './ui/present';
+import { bindPresentControls, readStored, writeStored } from './ui/present';
+import { bindDivider } from './ui/divider';
+import { bindLoupe } from './ui/loupe';
+import { bindHud } from './ui/hud';
 import { FullGame, type FullGameStats } from './full/fullgame';
 import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
@@ -28,6 +31,9 @@ export interface UiInfo {
   fullscreen: boolean;
   native: { w: number; h: number };
   present: { mode: string; sharpness: number };
+  compare: { on: boolean; a: string; b: string; split: number };
+  loupe: { on: boolean; zoom: number; source: boolean; size: number };
+  hud: boolean;
   state: UiState;
 }
 
@@ -45,6 +51,8 @@ declare global {
       lighting?: { mode: string; ambient: number; lights: number };
       present?: PresentInfo | null;
       ui?: UiInfo;
+      /** test hook: stop rendering new scene frames (the present path still repaints on setting changes) */
+      paused?: boolean;
     };
   }
 }
@@ -172,6 +180,14 @@ async function main(): Promise<void> {
   }
   console.info('WebGPU adapter:', JSON.stringify(renderer.adapterInfo));
   const presentCtl = bindPresentControls(renderer, params);
+  const loupeCtl = bindLoupe(renderer, canvas, params);
+  const hud = bindHud(params, readStored, writeStored, presentCtl.compare.on);
+  presentCtl.onChange(() => {
+    hud.compareChanged(presentCtl.compare.on);
+  });
+  bindDivider(presentCtl, canvas, () => {
+    if (full) canvas.focus({ preventScroll: true });
+  });
 
   type Active =
     | { kind: 'demo'; scene: DemoScene }
@@ -224,6 +240,11 @@ async function main(): Promise<void> {
         return presentCtl.sharpness;
       },
     },
+    compare: presentCtl.compare,
+    loupe: loupeCtl,
+    get hud() {
+      return hud.on;
+    },
     get state() {
       return ui;
     },
@@ -269,21 +290,36 @@ async function main(): Promise<void> {
     'keydown',
     (e) => {
       if (!panel.hotkeys) return;
+      // Ctrl+Shift chords (D2's default keys are F1-F12 skills/automap, letters, digits, Tab, Esc, Enter, Space, `;
+      // see keyconfig.hpp) plus Alt+Enter. None of them types a character, so no focus guard: they also work from a
+      // focused select or slider.
+      const chord = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
       let hit = true;
-      if (e.code === 'F11' || (e.altKey && e.code === 'Enter')) void fullscreen.toggle();
-      else if (e.code === 'F10') {
-        // toggles in play: hiding hands focus back to the game (bar.onHidden)
-        if (bar.state === 'overlay-visible') {
-          panel.closePopovers();
-          bar.hideNow();
-          // closing a popover that held focus already dropped it to body, so onHidden may not have fired
-          if (full) canvas.focus({ preventScroll: true });
-        } else {
-          bar.reveal();
-          $<HTMLSelectElement>('mode').focus();
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'Enter') {
+        if (!e.repeat) void fullscreen.toggle();
+      } else if (!chord) hit = false;
+      else if (e.code === 'KeyF') {
+        if (!e.repeat) void fullscreen.toggle();
+      } else if (e.code === 'KeyB') {
+        if (!e.repeat) {
+          // toggles in play: hiding hands focus back to the game (bar.onHidden)
+          if (bar.state === 'overlay-visible') {
+            panel.closePopovers();
+            bar.hideNow();
+            // closing a popover that held focus already dropped it to body, so onHidden may not have fired
+            if (full) canvas.focus({ preventScroll: true });
+          } else {
+            bar.reveal();
+            $<HTMLSelectElement>('mode').focus();
+          }
         }
-      } else if (e.code === 'F9') setDebug(debug.hidden !== false);
-      else hit = false;
+      } else if (e.code === 'KeyG') {
+        if (!e.repeat) setDebug(debug.hidden !== false);
+      } else if (e.code === 'KeyL') {
+        if (!e.repeat) loupeCtl.toggle();
+      } else if (e.code === 'KeyH') {
+        if (!e.repeat) hud.toggle();
+      } else hit = false;
       if (!hit) return;
       swallowed.add(e.code);
       e.preventDefault();
@@ -585,8 +621,10 @@ async function main(): Promise<void> {
   const t0 = last;
   const frame = (now: number): void => {
     publishUi();
+    hud.update(now, renderer.presentCount, full ? full.stats.frames : null, renderer.lastPresent);
     if (full) {
       full.tick();
+      if (renderer.presentDirty) renderer.repaint(); // divider / loupe / mode changed between game frames
       state.frames++;
       state.present = renderer.lastPresent;
       const st = full.stats;
@@ -614,6 +652,14 @@ async function main(): Promise<void> {
       return;
     }
     firstShown = false;
+    if (state.paused) {
+      if (renderer.presentDirty) {
+        renderer.repaint();
+        state.present = renderer.lastPresent;
+      }
+      requestAnimationFrame(frame);
+      return;
+    }
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     const speed = 400 * dt / camera.zoom;

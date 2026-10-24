@@ -2,14 +2,21 @@
 // Presentation modes and the FSR1 (EASU + RCAS) constant setup. The constants follow AMD's ffx_fsr1.h
 // (FsrEasuCon / FsrRcasCon), Copyright (c) 2021 Advanced Micro Devices, Inc., MIT License
 // (LICENSES/FidelityFX-FSR1-MIT.txt). The shaders are web/src/gpu/shaders/{easu,rcas}.wgsl.
-import { fitRect, fitRectFree, type Rect } from './fit';
+import { fitRect, fitRectFree, nativeRect, type Rect } from './fit';
 
-export type PresentMode = 'fsr1' | 'nearest' | 'bilinear';
+export type PresentMode = 'fsr1' | 'nearest' | 'bilinear' | 'nearest-stretch' | 'native' | 'easu' | 'fsr1-pixel';
 export const PRESENT_MODES: readonly { id: PresentMode; label: string }[] = [
   { id: 'fsr1', label: 'FSR1' },
-  { id: 'nearest', label: 'Nearest (integer)' },
+  { id: 'fsr1-pixel', label: 'FSR1 (pixel-art)' },
+  { id: 'easu', label: 'EASU only' },
   { id: 'bilinear', label: 'Bilinear' },
+  { id: 'nearest', label: 'Nearest (integer)' },
+  { id: 'nearest-stretch', label: 'Nearest (stretch)' },
+  { id: 'native', label: 'Off (1:1)' },
 ];
+export function presentLabel(mode: PresentMode): string {
+  return PRESENT_MODES.find((m) => m.id === mode)?.label ?? mode;
+}
 export const DEFAULT_PRESENT_MODE: PresentMode = 'fsr1';
 /** RCAS sharpness in stops of attenuation: 0 = sharpest, 2 = softest. */
 export const DEFAULT_SHARPNESS = 0.2;
@@ -67,7 +74,8 @@ export function packParams(out: Float32Array, easu: Float32Array, stops: number,
 }
 export const PARAMS_FLOATS = 20;
 
-export type PresentPass = 'easu-rcas' | 'bilinear' | 'nearest';
+/** easu-rcas: both FSR1 passes; easu: the EASU upscale shown as is (no sharpening) */
+export type PresentPass = 'easu-rcas' | 'easu' | 'bilinear' | 'nearest';
 export interface PresentPlan {
   pass: PresentPass;
   rect: Rect;
@@ -80,8 +88,22 @@ export interface PresentPlan {
  *  - fsr1: fractional fit; EASU + RCAS only when the output is larger than the source, else a bilinear downscale.
  */
 export function planPresent(mode: PresentMode, srcW: number, srcH: number, dstW: number, dstH: number): PresentPlan {
+  if (mode === 'native') return { pass: 'nearest', rect: nativeRect(srcW, srcH, dstW, dstH) };
+  if (mode === 'nearest-stretch') return { pass: 'nearest', rect: fitRectFree(srcW, srcH, dstW, dstH) };
   if (mode === 'nearest') return { pass: 'nearest', rect: fitRect(srcW, srcH, dstW, dstH) };
   const rect = fitRectFree(srcW, srcH, dstW, dstH);
+  if (mode === 'fsr1-pixel') return { pass: rect.w > srcW || rect.h > srcH ? 'easu-rcas' : 'bilinear', rect };
+  if (mode === 'easu') return { pass: rect.w > srcW || rect.h > srcH ? 'easu' : 'bilinear', rect };
   if (mode === 'fsr1' && (rect.w > srcW || rect.h > srcH)) return { pass: 'easu-rcas', rect };
   return { pass: 'bilinear', rect };
+}
+
+/**
+ * "FSR1 (pixel-art)": integer nearest prescale factor before EASU + RCAS. floor of the fit scale (3.17x -> 3, then
+ * EASU does the remaining 1.06x), at least 1 (= plain FSR1), capped so the prescaled texture fits `maxTex`.
+ */
+export function pixelPrescale(rect: Rect, srcW: number, srcH: number, maxTex = 8192): number {
+  const scale = Math.min(rect.w / srcW, rect.h / srcH);
+  const cap = Math.max(1, Math.floor(maxTex / Math.max(srcW, srcH)));
+  return Math.max(1, Math.min(cap, Math.floor(scale + 1e-6)));
 }

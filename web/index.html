@@ -29,10 +29,20 @@
 
         <span id="game-status" role="status" aria-live="polite">No game folder yet. Open a folder or drop it here.</span>
 
+        <button id="cmp-btn" type="button" aria-pressed="false" title="Compare two presentation modes side by side (draggable divider)">Compare</button>
         <select id="present" aria-label="Upscaling"></select>
+        <select id="cmp-a" aria-label="Compare mode A (left)" title="A: left of the divider" hidden></select>
+        <input id="cmp-sharp-a" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness A" title="A: RCAS sharpness (0 sharpest)" hidden />
+        <select id="cmp-b" aria-label="Compare mode B (right)" title="B: right of the divider" hidden></select>
+        <input id="cmp-sharp-b" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness B" title="B: RCAS sharpness (0 sharpest)" hidden />
+        <select id="cmp-preset" aria-label="Compare presets" title="A/B presets" hidden></select>
         <input id="sharp" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="FSR sharpness" title="RCAS sharpness (0 sharpest)" />
-        <button id="fs-btn" type="button" aria-label="Fullscreen" title="Fullscreen (F11, Alt+Enter)" aria-pressed="false">&#9974;</button>
-        <button id="debug-btn" type="button" aria-label="Debug overlay" title="Debug overlay (F9)" aria-pressed="false">{}</button>
+        <button id="loupe-btn" type="button" aria-pressed="false" title="Loupe: magnify the pixels under the pointer (Ctrl+Shift+L; Ctrl+wheel = zoom)">Loupe</button>
+        <select id="loupe-zoom" aria-label="Loupe zoom" title="Loupe zoom (Ctrl+wheel)" hidden></select>
+        <button id="loupe-src" type="button" aria-pressed="false" title="Loupe shows the native frame pixels instead of the presented output" hidden>src</button>
+        <button id="hud-btn" type="button" aria-pressed="false" title="HUD: fps, resolution, mode (Ctrl+Shift+H)">HUD</button>
+        <button id="fs-btn" type="button" aria-label="Fullscreen" title="Fullscreen (Alt+Enter, Ctrl+Shift+F)" aria-pressed="false">&#9974;</button>
+        <button id="debug-btn" type="button" aria-label="Debug overlay" title="Debug overlay (Ctrl+Shift+G)" aria-pressed="false">{}</button>
         <button id="pin-btn" type="button" aria-label="Keep the bar visible" title="Keep the bar visible" aria-pressed="false" hidden>pin</button>
 
         <div id="progress" role="progressbar" aria-hidden="true" hidden><div class="fill"></div></div>
@@ -62,7 +72,7 @@
           <div class="row">
             <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
             <label><input id="autoplay" type="checkbox" checked /> start the game after picking files</label>
-            <label><input id="hotkeys" type="checkbox" checked /> F9&ndash;F11 for the page (debug, bar, fullscreen)</label>
+            <label><input id="hotkeys" type="checkbox" checked /> Ctrl+Shift+L/H/G/B/F for the page (loupe, HUD, debug, bar, fullscreen)</label>
           </div>
         </section>
         <section id="about" class="popover" hidden>
@@ -96,6 +106,9 @@
             <button id="game-demo" type="button">Back to demo</button>
           </div>
         </div></div>
+        <div id="cmp-chips" aria-hidden="true"><span id="cmp-chip-a" class="chip" hidden></span><span id="cmp-chip-b" class="chip" hidden></span></div>
+        <div id="cmp-divider" hidden><div id="cmp-thumb" role="slider" tabindex="0" aria-label="Compare divider" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div></div>
+        <pre id="hud" aria-label="HUD" hidden></pre>
         <pre id="debug" aria-label="Debug panel" hidden>initialising...</pre>
       </main>
     </div>
