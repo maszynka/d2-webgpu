@@ -9,13 +9,16 @@ import easuWgsl from './shaders/easu.wgsl?raw';
 import rcasWgsl from './shaders/rcas.wgsl?raw';
 import lightLib from './shaders/light.wgsl?raw';
 import lightingWgsl from './shaders/lighting.wgsl?raw';
+import loupeWgsl from './shaders/loupe.wgsl?raw';
+import { planCompare } from './compare';
+import { loupeLayout } from './loupe';
 import { LIGHT_PARAMS_BYTES, MAX_LIGHTS, packLightParams, type LightingState } from './lighting';
 import { surfaceWgslConstants } from './surface';
 import { ShelfPacker, type AtlasRect } from './atlas';
 import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
-import { fitRect, type Rect } from './fit';
-import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PARAMS_FLOATS, clampSharpness, easuConstants, packParams, planPresent, type PresentMode, type PresentPass } from './fsr';
+import { backingSize, fitRect, type Rect } from './fit';
+import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PARAMS_FLOATS, clampSharpness, easuConstants, packParams, pixelPrescale, planPresent, type PresentMode, type PresentPass } from './fsr';
 import { GpuTimer } from './timer';
 import type { Camera } from '../world/camera';
 
@@ -45,9 +48,52 @@ export { fitRect };
 
 /** Source texture bind groups for the presentation passes. */
 interface SrcBinds {
+  view: GPUTextureView;
   nearest: GPUBindGroup;
   linear: GPUBindGroup;
-  easu: GPUBindGroup;
+  /** loupe bind group (composite + this source), valid for `loupeFor` */
+  loupe?: GPUBindGroup;
+  loupeFor?: GPUTexture;
+}
+
+export interface CompareState {
+  on: boolean;
+  a: PresentMode;
+  b: PresentMode;
+  /** divider position, fraction of the canvas width */
+  split: number;
+  /** RCAS sharpness (stops) per side while that side is FSR1 */
+  sharpA: number;
+  sharpB: number;
+}
+export interface LoupeState {
+  on: boolean;
+  /** the pointer is over the canvas (the square is drawn) */
+  visible: boolean;
+  /** pointer position on the canvas, device px */
+  x: number;
+  y: number;
+  zoom: number;
+  /** square edge, device px */
+  size: number;
+  /** show native-frame pixels instead of the composed output */
+  source: boolean;
+}
+
+interface FsrChain {
+  k: number;
+  preTex: GPUTexture | null;
+  preView: GPUTextureView | null;
+  easuTex: GPUTexture;
+  easuBind: GPUBindGroup;
+  rcasA: GPUBindGroup;
+  rcasB: GPUBindGroup;
+  show: GPUBindGroup;
+  bufA: GPUBuffer;
+  bufB: GPUBuffer;
+  srcView: GPUTextureView;
+  preW: number;
+  preH: number;
 }
 
 /** What the last presentation did (debug panel, tests). */
@@ -61,6 +107,12 @@ export interface PresentInfo {
   rect: Rect;
   /** GPU time of the EASU + RCAS passes, ms (null: no timestamp-query feature, or no EASU this frame) */
   gpuMs: number | null;
+  /** A/B compare: both sides' modes and passes, the divider in canvas px (null: single mode) */
+  compare: { a: PresentMode; b: PresentMode; passA: PresentPass; passB: PresentPass; splitPx: number; prescaleA: number; prescaleB: number } | null;
+  /** nearest prescale factor before EASU ("FSR1 (pixel-art)"); 1 = none */
+  prescale: number;
+  /** the loupe square on the canvas (device px) while it is drawn */
+  loupe: { box: Rect; center: { x: number; y: number }; zoom: number; source: boolean } | null;
 }
 
 export class Renderer {
@@ -100,14 +152,29 @@ export class Renderer {
   private readonly easuBgl: GPUBindGroupLayout;
   private readonly easuPipeline: GPURenderPipeline;
   private readonly rcasPipeline: GPURenderPipeline;
-  private readonly paramsBuf: GPUBuffer;
   private readonly paramsData = new Float32Array(PARAMS_FLOATS);
-  private easuTex: GPUTexture | null = null;
-  private rcasBind: GPUBindGroup | null = null;
+  /** FSR chains keyed by the nearest prescale factor (1 = none): EASU input, EASU output, RCAS bind groups, params */
+  private readonly chains = new Map<number, FsrChain>();
+  private blitRgbaPipeline!: GPURenderPipeline;
+  /** exact device-pixel size of the canvas from the ResizeObserver (null until it reports, or unsupported) */
+  private devPx: { w: number; h: number } | null = null;
   private readonly timer: GpuTimer | null;
   presentMode: PresentMode = DEFAULT_PRESENT_MODE;
   sharpness = DEFAULT_SHARPNESS;
   lastPresent: PresentInfo | null = null;
+  compare: CompareState = { on: false, a: 'nearest-stretch', b: 'fsr1', split: 0.5, sharpA: DEFAULT_SHARPNESS, sharpB: DEFAULT_SHARPNESS };
+  loupe: LoupeState = { on: false, visible: false, x: 0, y: 0, zoom: 8, size: 256, source: false };
+  /** frames handed to render() / presentRgba() (not repaints): the HUD's presented-frame counter */
+  presentCount = 0;
+  /** set when a presentation setting changed: callers that only present on new frames should repaint() */
+  presentDirty = false;
+  private lastSrc: { binds: SrcBinds; w: number; h: number } | null = null;
+  private composite: GPUTexture | null = null;
+  private compositeBind: GPUBindGroup | null = null;
+  private loupePipeline!: GPURenderPipeline;
+  private loupeBgl!: GPUBindGroupLayout;
+  private loupeBuf!: GPUBuffer;
+  private readonly loupeData = new Float32Array(16);
   private readonly blitBgl: GPUBindGroupLayout;
   private readonly blitSampler: GPUSampler;
   private frameTex: GPUTexture | null = null;
@@ -343,7 +410,40 @@ export class Renderer {
       fragment: { module: rcasModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
       primitive: { topology: 'triangle-list' },
     });
-    this.paramsBuf = device.createBuffer({ label: 'present-params', size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.blitRgbaPipeline = device.createRenderPipeline({
+      label: 'blit-rgba',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [blitBgl] }),
+      vertex: { module: blitModule, entryPoint: 'vs' },
+      fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.loupeBgl = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+      ],
+    });
+    const loupeModule = device.createShaderModule({ label: 'loupe', code: loupeWgsl });
+    this.loupePipeline = device.createRenderPipeline({
+      label: 'loupe',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.loupeBgl] }),
+      vertex: { module: loupeModule, entryPoint: 'vs' },
+      fragment: { module: loupeModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.loupeBuf = device.createBuffer({ label: 'loupe-params', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    try {
+      new ResizeObserver((entries) => {
+        for (const e of entries) {
+          const b = e.devicePixelContentBoxSize?.[0];
+          if (b) this.devPx = { w: b.inlineSize, h: b.blockSize };
+        }
+        this.presentDirty = true; // a paused source is repainted at the new size
+      }).observe(canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      /* no device-pixel-content-box: client size * dpr below */
+    }
     this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 2) : null;
     this.sceneBinds = this.makeBinds(this.sceneView);
     device.addEventListener?.('uncapturederror', (e) => {
@@ -412,14 +512,32 @@ export class Renderer {
   setPresent(mode: PresentMode, sharpness: number = this.sharpness): void {
     this.presentMode = mode;
     this.sharpness = clampSharpness(sharpness);
+    this.presentDirty = true;
   }
 
-  /** Match the canvas backing store to its CSS size at the device pixel ratio. */
+  /** A/B compare: mode A left of the divider, mode B right, same rect for both. */
+  setCompare(c: CompareState): void {
+    this.compare = { ...c };
+    this.presentDirty = true;
+  }
+
+  /** Loupe state (cheap; the composite path is only used while the loupe is on and the pointer is over the canvas). */
+  setLoupe(l: Partial<LoupeState>): void {
+    this.loupe = { ...this.loupe, ...l };
+    this.presentDirty = true;
+  }
+
+  /** Present the last source again (a setting or the loupe moved and no new frame arrived). */
+  repaint(): void {
+    if (!this.lastSrc) return;
+    const enc = this.device.createCommandEncoder();
+    this.encodePresent(enc, this.lastSrc.binds, this.lastSrc.w, this.lastSrc.h);
+    this.device.queue.submit([enc.finish()]);
+  }
+
+  /** Match the canvas backing store to its size in device pixels (the observer's exact box, else client size * dpr). */
   resizeToDisplay(): void {
-    const dpr = window.devicePixelRatio || 1;
-    const max = this.device.limits.maxTextureDimension2D;
-    const w = Math.min(max, Math.max(1, Math.round(this.canvas.clientWidth * dpr)));
-    const h = Math.min(max, Math.max(1, Math.round(this.canvas.clientHeight * dpr)));
+    const { w, h } = backingSize(this.devPx, this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.device.limits.maxTextureDimension2D);
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
@@ -430,69 +548,194 @@ export class Renderer {
     const bg = (sampler: GPUSampler) =>
       this.device.createBindGroup({ layout: this.blitBgl, entries: [{ binding: 0, resource: view }, { binding: 1, resource: sampler }] });
     return {
+      view,
       nearest: bg(this.blitSampler),
       linear: bg(this.linearSampler),
-      easu: this.device.createBindGroup({ layout: this.easuBgl, entries: [{ binding: 0, resource: { buffer: this.paramsBuf } }, { binding: 1, resource: view }] }),
     };
+  }
+
+  /** The (re)built EASU chain for nearest prescale k at this rect / source: textures and bind groups follow size changes. */
+  private fsrChain(k: number, binds: SrcBinds, srcW: number, srcH: number, r: Rect): FsrChain {
+    let ch = this.chains.get(k);
+    const preW = srcW * k;
+    const preH = srcH * k;
+    if (ch && ch.easuTex.width === r.w && ch.easuTex.height === r.h && ch.srcView === binds.view && ch.preW === preW && ch.preH === preH) return ch;
+    const d = this.device;
+    const rt = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+    if (ch) {
+      ch.easuTex.destroy();
+      ch.preTex?.destroy();
+    }
+    const bufA = ch?.bufA ?? d.createBuffer({ label: `present-params-a${k}`, size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const bufB = ch?.bufB ?? d.createBuffer({ label: `present-params-b${k}`, size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const preTex = k > 1 ? d.createTexture({ label: `prescale-${k}x`, size: [preW, preH], format: 'rgba8unorm', usage: rt }) : null;
+    const preView = preTex ? preTex.createView() : null;
+    const easuTex = d.createTexture({ label: 'easu-out', size: [r.w, r.h], format: 'rgba8unorm', usage: rt });
+    const ev = easuTex.createView();
+    const bg = (buf: GPUBuffer, view: GPUTextureView): GPUBindGroup =>
+      d.createBindGroup({ layout: this.easuBgl, entries: [{ binding: 0, resource: { buffer: buf } }, { binding: 1, resource: view }] });
+    ch = {
+      k,
+      preTex,
+      preView,
+      easuTex,
+      easuBind: bg(bufA, preView ?? binds.view),
+      rcasA: bg(bufA, ev),
+      rcasB: bg(bufB, ev),
+      show: d.createBindGroup({ layout: this.blitBgl, entries: [{ binding: 0, resource: ev }, { binding: 1, resource: this.blitSampler }] }),
+      bufA,
+      bufB,
+      srcView: binds.view,
+      preW,
+      preH,
+    };
+    this.chains.set(k, ch);
+    return ch;
+  }
+
+  private ensureComposite(w: number, h: number): GPUTexture {
+    if (!this.composite || this.composite.width !== w || this.composite.height !== h) {
+      this.composite?.destroy();
+      this.composite = this.device.createTexture({
+        label: 'composite',
+        size: [w, h],
+        format: this.canvasFormat,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      this.compositeBind = this.device.createBindGroup({
+        layout: this.blitBgl,
+        entries: [{ binding: 0, resource: this.composite.createView() }, { binding: 1, resource: this.blitSampler }],
+      });
+    }
+    return this.composite;
   }
 
   /** Encode the passes that show a srcW x srcH texture on the canvas in the current presentation mode. */
   private encodePresent(enc: GPUCommandEncoder, binds: SrcBinds, srcW: number, srcH: number): void {
     this.resizeToDisplay();
+    this.presentDirty = false;
+    this.lastSrc = { binds, w: srcW, h: srcH };
     const cw = this.canvas.width;
     const ch = this.canvas.height;
-    const plan = planPresent(this.presentMode, srcW, srcH, cw, ch);
-    const r = plan.rect;
+    const cmp = this.compare.on ? planCompare(this.compare.a, this.compare.b, this.compare.split, srcW, srcH, cw, ch) : null;
+    const plan = cmp ? null : planPresent(this.presentMode, srcW, srcH, cw, ch);
+    const r = cmp ? cmp.rect : plan!.rect;
     this.lastRect = r;
-    const target = this.ctx.getCurrentTexture().createView();
+    const maxTex = this.device.limits.maxTextureDimension2D;
+    const kOf = (m: PresentMode, pass: PresentPass): number => (m === 'fsr1-pixel' && pass === 'easu-rcas' ? pixelPrescale(r, srcW, srcH, maxTex) : 1);
+    const segs: { pass: PresentPass; scissor: Rect | null; side: number; sharp: number; k: number }[] = cmp
+      ? [
+          { ...cmp.a, side: 0, sharp: this.compare.sharpA, k: kOf(cmp.a.mode, cmp.a.pass) },
+          { ...cmp.b, side: 1, sharp: this.compare.sharpB, k: kOf(cmp.b.mode, cmp.b.pass) },
+        ]
+      : [{ pass: plan!.pass, scissor: r, side: 0, sharp: this.sharpness, k: kOf(this.presentMode, plan!.pass) }];
+    const loupeOn = this.loupe.on && this.loupe.visible;
+    const canvasView = this.ctx.getCurrentTexture().createView();
+    const target = loupeOn ? this.ensureComposite(cw, ch).createView() : canvasView;
     const clear = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
     let gpuMs: number | null = null;
-    if (plan.pass === 'easu-rcas') {
-      if (!this.easuTex || this.easuTex.width !== r.w || this.easuTex.height !== r.h) {
-        this.easuTex?.destroy();
-        this.easuTex = this.device.createTexture({
-          label: 'easu-out',
-          size: [r.w, r.h],
-          format: 'rgba8unorm',
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-        });
-        this.rcasBind = this.device.createBindGroup({
-          layout: this.easuBgl,
-          entries: [{ binding: 0, resource: { buffer: this.paramsBuf } }, { binding: 1, resource: this.easuTex.createView() }],
-        });
+    let timed = false;
+    const ks = [...new Set(segs.filter((g) => g.pass === 'easu-rcas' || g.pass === 'easu').map((g) => g.k))];
+    for (const k of ks) {
+      const ch = this.fsrChain(k, binds, srcW, srcH, r);
+      const inW = srcW * k;
+      const inH = srcH * k;
+      const con = easuConstants(inW, inH, inW, inH, r.w, r.h);
+      const sharpOf = (side: number): number => segs.find((g) => g.side === side && g.k === k)?.sharp ?? this.sharpness;
+      this.device.queue.writeBuffer(ch.bufA, 0, packParams(this.paramsData, con, sharpOf(0), r) as Float32Array<ArrayBuffer>);
+      this.device.queue.writeBuffer(ch.bufB, 0, packParams(this.paramsData, con, sharpOf(1), r) as Float32Array<ArrayBuffer>);
+      if (ch.preView) {
+        const pre = enc.beginRenderPass({ colorAttachments: [{ view: ch.preView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
+        pre.setPipeline(this.blitRgbaPipeline);
+        pre.setBindGroup(0, binds.nearest);
+        pre.draw(3);
+        pre.end();
       }
-      this.device.queue.writeBuffer(this.paramsBuf, 0, packParams(this.paramsData, easuConstants(srcW, srcH, srcW, srcH, r.w, r.h), this.sharpness, r) as Float32Array<ArrayBuffer>);
-      const timed = this.timer?.begin() ?? false;
+      const first = k === ks[0];
+      if (first) timed = this.timer?.begin() ?? false;
       const easu = enc.beginRenderPass({
-        colorAttachments: [{ view: this.easuTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
-        ...(timed ? { timestampWrites: this.timer!.writes() } : {}),
+        colorAttachments: [{ view: ch.easuTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+        ...(first && timed ? { timestampWrites: this.timer!.writes() } : {}),
       });
       easu.setPipeline(this.easuPipeline);
-      easu.setBindGroup(0, binds.easu);
+      easu.setBindGroup(0, ch.easuBind);
       easu.draw(3);
       easu.end();
-      const rcas = enc.beginRenderPass({
-        colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: clear }],
-        ...(timed ? { timestampWrites: this.timer!.writes() } : {}),
-      });
-      rcas.setViewport(r.x, r.y, r.w, r.h, 0, 1);
-      rcas.setScissorRect(r.x, r.y, r.w, r.h);
-      rcas.setPipeline(this.rcasPipeline);
-      rcas.setBindGroup(0, this.rcasBind!);
-      rcas.draw(3);
-      rcas.end();
-      if (timed) this.timer!.finish(enc);
-      gpuMs = this.timer ? this.timer.avgMs : null;
-    } else {
-      const pass = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: clear }] });
-      pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
-      pass.setScissorRect(r.x, r.y, r.w, r.h);
-      pass.setPipeline(this.blitPipeline);
-      pass.setBindGroup(0, plan.pass === 'nearest' ? binds.nearest : binds.linear);
-      pass.draw(3);
-      pass.end();
     }
-    this.lastPresent = { mode: this.presentMode, pass: plan.pass, srcW, srcH, canvasW: cw, canvasH: ch, rect: r, gpuMs };
+    let rcasTimed = false;
+    segs.forEach((g, i) => {
+      const stamp = timed && g.pass === 'easu-rcas' && !rcasTimed;
+      if (stamp) rcasTimed = true;
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{ view: target, loadOp: i === 0 ? 'clear' : 'load', storeOp: 'store', clearValue: clear }],
+        ...(stamp ? { timestampWrites: this.timer!.writes() } : {}),
+      });
+      const sc = g.scissor;
+      if (sc) {
+        pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
+        pass.setScissorRect(sc.x, sc.y, sc.w, sc.h);
+        if (g.pass === 'easu-rcas') {
+          pass.setPipeline(this.rcasPipeline);
+          const ch = this.chains.get(g.k)!;
+          pass.setBindGroup(0, g.side === 0 ? ch.rcasA : ch.rcasB);
+        } else if (g.pass === 'easu') {
+          pass.setPipeline(this.blitPipeline); // the EASU texture is rect-sized: a 1:1 copy
+          pass.setBindGroup(0, this.chains.get(g.k)!.show);
+        } else {
+          pass.setPipeline(this.blitPipeline);
+          pass.setBindGroup(0, g.pass === 'nearest' ? binds.nearest : binds.linear);
+        }
+        pass.draw(3);
+      }
+      pass.end();
+    });
+    if (timed) {
+      this.timer!.finish(enc);
+      gpuMs = this.timer ? this.timer.avgMs : null;
+    }
+    let loupeInfo: PresentInfo['loupe'] = null;
+    if (loupeOn) {
+      const L = this.loupe;
+      const lay = loupeLayout(L.x, L.y, L.size, cw, ch);
+      if (binds.loupeFor !== this.composite) {
+        binds.loupe = this.device.createBindGroup({
+          layout: this.loupeBgl,
+          entries: [
+            { binding: 0, resource: { buffer: this.loupeBuf } },
+            { binding: 1, resource: this.composite!.createView() },
+            { binding: 2, resource: binds.view },
+          ],
+        });
+        binds.loupeFor = this.composite!;
+      }
+      const d = this.loupeData;
+      d.set([lay.box.x, lay.box.y, lay.box.w, L.zoom, lay.center.x, lay.center.y, cw, ch, r.x, r.y, r.w, r.h, srcW, srcH, L.source ? 1 : 0, 0]);
+      this.device.queue.writeBuffer(this.loupeBuf, 0, d as Float32Array<ArrayBuffer>);
+      const fin = enc.beginRenderPass({ colorAttachments: [{ view: canvasView, loadOp: 'clear', storeOp: 'store', clearValue: clear }] });
+      fin.setViewport(0, 0, cw, ch, 0, 1);
+      fin.setPipeline(this.blitPipeline);
+      fin.setBindGroup(0, this.compositeBind!);
+      fin.draw(3);
+      fin.setPipeline(this.loupePipeline);
+      fin.setBindGroup(0, binds.loupe!);
+      fin.setScissorRect(lay.box.x, lay.box.y, lay.box.w, lay.box.h);
+      fin.draw(3);
+      fin.end();
+      loupeInfo = { box: lay.box, center: lay.center, zoom: L.zoom, source: L.source };
+    }
+    this.lastPresent = {
+      mode: this.presentMode,
+      pass: segs[0]!.pass,
+      srcW,
+      srcH,
+      canvasW: cw,
+      canvasH: ch,
+      rect: r,
+      gpuMs,
+      compare: cmp ? { a: cmp.a.mode, b: cmp.b.mode, passA: cmp.a.pass, passB: cmp.b.pass, splitPx: cmp.splitPx, prescaleA: segs[0]!.k, prescaleB: segs[1]!.k } : null,
+      prescale: segs[0]!.k,
+      loupe: loupeInfo,
+    };
   }
 
   render(list: DrawList, camera: Camera): void {
@@ -545,6 +788,7 @@ export class Renderer {
     lightPass.draw(3);
     lightPass.end();
 
+    this.presentCount++;
     this.encodePresent(enc, this.sceneBinds, this.sceneW, this.sceneH);
     device.queue.submit([enc.finish()]);
   }
@@ -574,6 +818,7 @@ export class Renderer {
       { bytesPerRow: width * 4, rowsPerImage: height },
       [width, height],
     );
+    this.presentCount++;
     const enc = device.createCommandEncoder();
     this.encodePresent(enc, this.frameBinds!, width, height);
     device.queue.submit([enc.finish()]);

@@ -230,6 +230,67 @@ function edgeEnergy(buf: Buffer): number {
   return sum / n;
 }
 
+test('compare: bilinear | FSR1 in the camp, pointer mapping intact, divider drag, loupe, HUD', async ({ page }) => {
+  const errors = watch(page);
+  await page.addInitScript(() => {
+    localStorage.setItem('d2.cmp', '1');
+    localStorage.setItem('d2.cmpA', 'bilinear');
+    localStorage.setItem('d2.cmpB', 'fsr1');
+    localStorage.setItem('d2.hud', '1');
+    localStorage.setItem('d2.cmpSplit', '0.8'); // the divider handle takes clicks: keep it off the menus' centre buttons
+  });
+  await openAndPlay(page);
+  await page.waitForTimeout(1500);
+  await newCharacter(page, 'Cmp');
+  await page.waitForTimeout(3000);
+  const pr = await page.evaluate(() => window.__d2!.present!);
+  expect(pr.compare).toMatchObject({ a: 'bilinear', b: 'fsr1' });
+  // the shared rect: the click mapping (lastRect) must still hit the right game pixel
+  const p0 = cam(await gameState(page));
+  await click(page, 560, 360, 1800);
+  const p1 = cam(await gameState(page));
+  expect(dist(p0, p1), 'a click on the ground walks the character in compare mode').toBeGreaterThan(1);
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: path.join(shots, 'cmp-camp-compare.png') });
+  const png = PNG.sync.read(await page.locator('canvas#view').screenshot());
+  const info = await page.evaluate(() => ({ split: window.__d2!.present!.compare!.splitPx, rect: window.__d2!.present!.rect }));
+  const edge = (x0: number, x1: number): number => {
+    let sum = 0;
+    let n = 0;
+    for (let y = 120; y < png.height - 20; y++)
+      for (let x = x0 + 1; x < x1; x++) {
+        const i = (y * png.width + x) * 4;
+        sum += Math.abs(png.data[i + 1]! - png.data[i - 3]!);
+        n++;
+      }
+    return sum / n;
+  };
+  const a = edge(info.rect.x + 10, info.split - 20);
+  const b = edge(info.split + 20, info.rect.x + info.rect.w - 10);
+  console.log(`camp edge metric (green channel step): bilinear ${a.toFixed(2)} | fsr1 ${b.toFixed(2)}`);
+  // drag the divider while the game runs: no click reaches the game, the boundary follows
+  const h = (await page.locator('#cmp-divider').boundingBox())!;
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(h.x - 250, h.y + h.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+  const moved = await page.evaluate(() => window.__d2!.present!.compare!.splitPx);
+  expect(moved).toBeLessThan(info.split - 200);
+  // loupe (hotkey) near the divider + HUD text
+  await page.keyboard.press('Backquote');
+  const hh = (await page.locator('#cmp-divider').boundingBox())!;
+  await page.mouse.move(hh.x - 40, hh.y + hh.height / 2);
+  await page.waitForTimeout(800);
+  expect((await page.evaluate(() => window.__d2!.present!.loupe))!.zoom).toBe(8);
+  await page.screenshot({ path: path.join(shots, 'cmp-camp-loupe.png') });
+  const hud = (await page.locator('#hud').textContent())!;
+  console.log(`HUD in the camp:\n${hud}`);
+  expect(hud).toMatch(/source \d+x600/);
+  expect(hud).toMatch(/game \d+\.\d\/s/);
+  expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
+});
+
 test('resolution: the in-game view is wider than 800 and follows the window, shown with FSR1 and nearest', async ({ page }) => {
   const errors = watch(page);
   await page.setViewportSize({ width: 1600, height: 900 });

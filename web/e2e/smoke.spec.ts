@@ -114,6 +114,27 @@ test('presentation modes (FSR1, nearest, bilinear) render without WebGPU errors 
   expect(shots['fsr1']!.equals(shots['nearest']!)).toBe(false);
   expect(shots['bilinear']!.equals(shots['nearest']!)).toBe(false);
   expect(shots['fsr1']!.equals(shots['bilinear']!)).toBe(false);
+  // quantitative: FSR1 must differ from bilinear by more than rounding noise, and carry clearly more edge energy
+  const fsrPng = PNG.sync.read(shots['fsr1']!);
+  const bilPng = PNG.sync.read(shots['bilinear']!);
+  let abs = 0;
+  let eF = 0;
+  let eB = 0;
+  const lumAt = (png: PNG, i: number): number => 0.299 * png.data[i]! + 0.587 * png.data[i + 1]! + 0.114 * png.data[i + 2]!;
+  for (let y = 40; y < fsrPng.height - 40; y++) {
+    for (let x = 41; x < fsrPng.width - 40; x++) {
+      const i = (y * fsrPng.width + x) * 4;
+      abs += (Math.abs(fsrPng.data[i]! - bilPng.data[i]!) + Math.abs(fsrPng.data[i + 1]! - bilPng.data[i + 1]!) + Math.abs(fsrPng.data[i + 2]! - bilPng.data[i + 2]!)) / 3;
+      eF += Math.abs(lumAt(fsrPng, i) - lumAt(fsrPng, i - 4));
+      eB += Math.abs(lumAt(bilPng, i) - lumAt(bilPng, i - 4));
+    }
+  }
+  const px = (fsrPng.height - 80) * (fsrPng.width - 81);
+  const meanDiff = abs / px;
+  const edgeRatio = eF / eB;
+  console.log(`fsr1 vs bilinear: mean |diff| ${meanDiff.toFixed(2)}/255, edge-energy ratio ${edgeRatio.toFixed(2)}`);
+  expect(meanDiff).toBeGreaterThan(1.5);
+  expect(edgeRatio).toBeGreaterThan(1.3);
   // sharpness only matters for FSR1
   await page.selectOption('#present', 'fsr1');
   await page.fill('#sharp', '0');

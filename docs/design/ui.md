@@ -162,6 +162,37 @@ buttons; an opt-out `d2.hotkeys='0'` (tools popover checkbox "Keep F9–F11 for 
   (F10 → first control); from the game, Tab is the automap, untouched.
 * On `blur` of the window the game already releases keys (`EV.blur`).
 
+### 2.8 Compare, loupe, HUD (added 2026-10-24)
+
+Request: *"a sliding-window option to see the render without FSR and with it side by side, plus frame rate, original
+resolution, and a magnifier square where I just see the enlarged pixels."*
+
+| Control (bar, left to right after the status) | id | What it does |
+|---|---|---|
+| `Compare` toggle | `#cmp-btn` | on: the frame is presented twice into the same canvas, mode A left of a vertical divider, mode B right. `#present` is replaced by `#cmp-a`, `#cmp-b` (all modes), a sharpness slider per FSR1 side (`#cmp-sharp-a/b`) and `#cmp-preset` ("FSR1 vs Bilinear", "EASU only vs Bilinear"). Defaults A = Nearest (stretch), B = FSR1. |
+| Divider | `#cmp-divider` (`role=slider`) | the only thing in compare that takes pointer events: drag it (the game never sees the press), or focus it and use Left/Right (1 %), Shift+arrows (10 %), Home/End. Position persists (`d2.cmpSplit`). Chips `A: <mode>` / `B: <mode>` sit at the top of each side (hidden when a side is narrower than 90 px). |
+| `Loupe`, zoom select (2x..16x), `src` | `#loupe-btn`, `#loupe-zoom`, `#loupe-src` | a 256 CSS-px square (`?loupeSize=`, 64..768) follows the pointer (24 px offset, flips/clamps at the canvas edges) and shows the composed output under it magnified with nearest sampling: blocks of k x k identical pixels, a magenta outline round the pixel under the pointer, so near the divider both sides are visible. `src` shows the native frame's pixels at the same place instead. Zoom: select, or **Ctrl+wheel** while the loupe is on (the game never gets a Ctrl+wheel; plain wheel stays the game's). The loupe is drawn on the canvas, takes no pointer events. |
+| `HUD` | `#hud-btn`, `#hud` | top-left (below the A chip in compare): presented fps (smoothed, from present calls; plus game frames received/s in the game), source `WxH`, output px, frame rect, scale, dpr, mode(s) with pass and nearest prescale, GPU ms (EASU+RCAS, only with `timestamp-query`). Off by default, on with compare unless switched off by the user. Not part of the F9 debug overlay. |
+
+Modes (`PRESENT_MODES`, `?present=`): `fsr1`, `fsr1-pixel` (integer nearest prescale by floor(scale), then EASU+RCAS for the
+rest; = fsr1 below 2x), `easu` (EASU only, no RCAS), `bilinear`, `nearest` (integer), `nearest-stretch` (fractional fit,
+nearest), `native` ("Off (1:1)": one source pixel = one device pixel, centred; downscaled only when larger than the canvas).
+In compare mode both sides use the fractional fit rect (so pixels line up): nearest, nearest-stretch and native all become
+nearest sampling in that rect there. URL: `?compare=1&cmpA=&cmpB=&split=0.5&sharpA=&sharpB=&loupe=1&loupeZoom=8&loupeSrc=1&hud=1`
+(URL wins for that load, not written back).
+
+Hotkeys (same capture listener as 2.5, ignored while a text input / select has focus, off with the "F9-F11 for the page"
+checkbox): **`` ` `` (Backquote)** loupe, **Shift+`` ` ``** HUD. Why: D2's defaults use F1-F8, letters, digits, Tab, Alt, Ctrl,
+Shift, Esc, Enter, Space; upstream `controls.cpp` can map Backquote but binds no default action to it; F9/F10/F11 are ours;
+F12 is the browser's devtools. No hotkey for Compare (bar button / divider).
+
+Implementation: `gpu/compare.ts` (plan + scissors), `gpu/loupe.ts` (layout, zoom steps, source index), `shaders/loupe.wgsl`,
+`Renderer.encodePresent` (one pass per side with that side's scissor; with the loupe on the output goes to an offscreen
+composite texture of canvas size, then blit + loupe quad; with the loupe off there is no composite). Presentation settings,
+the divider, the loupe and a canvas resize mark `presentDirty`; the main loop `repaint()`s the last source when no new frame
+arrived (the full game presents only on worker frames). The canvas backing store uses the ResizeObserver
+`device-pixel-content-box` size (falls back to client size x dpr), no compositor resample at fractional dpr / zoom.
+
 ## 3. Game surface
 
 ### 3.1 Layout
