@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { cam, click, ctl, gameState, moveTo, mpqDir, openAndPlay, perf, perfReset, shot, shots, shownFrames, stats, waitState } from './fullhelpers';
+import { cam, click, ctl, gamePoint, gameState, moveTo, mpqDir, openAndPlay, perf, perfReset, shot, shots, shownFrames, stats, waitState } from './fullhelpers';
 
 test.skip(!mpqDir, 'set D2_MPQ_DIR to run against real game files');
 test.setTimeout(10 * 60_000);
@@ -277,9 +277,48 @@ test('compare: bilinear | FSR1 in the camp, pointer mapping intact, divider drag
   await page.waitForTimeout(600);
   const moved = await page.evaluate(() => window.__d2!.present!.compare!.splitPx);
   expect(moved).toBeLessThan(info.split - 200);
-  // loupe (hotkey) near the divider + HUD text
+  // a click exactly ON the divider line (not the thumb) is the game's: put the line over a ground point and click there
+  const gp = await gamePoint(page, 240, 360);
+  const th0 = (await page.locator('#cmp-thumb').boundingBox())!;
+  await page.mouse.move(th0.x + th0.width / 2, th0.y + th0.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gp.x, th0.y + th0.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const th1 = (await page.locator('#cmp-thumb').boundingBox())!;
+  expect(Math.abs(th1.x + th1.width / 2 - gp.x), 'the divider line sits over the target').toBeLessThan(4);
+  expect(Math.abs(gp.y - (th1.y + th1.height / 2)), 'target is off the thumb').toBeGreaterThan(th1.height / 2 + 6);
+  await page.evaluate(() => {
+    const w = window as unknown as { __cd2: number };
+    w.__cd2 = 0;
+    document.querySelector('canvas#view')!.addEventListener('pointerdown', () => w.__cd2++);
+  });
+  const q0 = cam(await gameState(page));
+  await page.mouse.move(gp.x, gp.y);
+  await page.waitForTimeout(150);
+  await page.mouse.down();
+  await page.waitForTimeout(120);
+  await page.mouse.up();
+  await page.waitForTimeout(1800);
+  expect(await page.evaluate(() => (window as unknown as { __cd2: number }).__cd2), 'the click on the divider line reaches the game').toBe(1);
+  expect(dist(q0, cam(await gameState(page))), 'the click on the divider line walks the character').toBeGreaterThan(0.8);
+  // Backquote (D2's belt key) is not swallowed by the page: it reaches the game's key listeners unprevented
+  await page.evaluate(() => {
+    const out: { seen: number; prevented: number } = { seen: 0, prevented: 0 };
+    (window as unknown as { __bq: typeof out }).__bq = out;
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Backquote') return;
+      out.seen++;
+      if (e.defaultPrevented) out.prevented++;
+    }, true);
+  });
+  await page.locator('canvas#view').focus();
   await page.keyboard.press('Backquote');
-  const hh = (await page.locator('#cmp-divider').boundingBox())!;
+  const bq = await page.evaluate(() => (window as unknown as { __bq: { seen: number; prevented: number } }).__bq);
+  expect(bq, 'Backquote reaches the game').toEqual({ seen: 1, prevented: 0 });
+  // loupe (Ctrl+Shift+L) near the divider + HUD text
+  await page.keyboard.press('Control+Shift+KeyL');
+  const hh = (await page.locator('#cmp-thumb').boundingBox())!;
   await page.mouse.move(hh.x - 40, hh.y + hh.height / 2);
   await page.waitForTimeout(800);
   expect((await page.evaluate(() => window.__d2!.present!.loupe))!.zoom).toBe(8);
@@ -381,10 +420,10 @@ test('ui: autoplay on pick, the page becomes the game, the bar hides and returns
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar), { timeout: 3000 }).toBe('overlay-visible');
   await pageShot(page, 'res-play-bar-revealed.png');
   await page.mouse.move(900, 500);
-  await page.keyboard.press('F9');
+  await page.keyboard.press('Control+Shift+KeyG');
   await page.waitForTimeout(1200);
   await pageShot(page, 'res-play-debug.png');
-  await page.keyboard.press('F9');
+  await page.keyboard.press('Control+Shift+KeyG');
 
   await newCharacter(page, 'Ui');
   await page.waitForTimeout(3000);

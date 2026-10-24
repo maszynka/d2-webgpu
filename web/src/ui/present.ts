@@ -107,7 +107,8 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
   };
   c.compare.sharpA = num(params.get('sharpA'), readStored(K_SHARP_A), c.sharpness);
   c.compare.sharpB = num(params.get('sharpB'), readStored(K_SHARP_B), c.sharpness);
-  const fsrSide = (m: PresentMode): boolean => m === 'fsr1';
+  // RCAS runs (and has a sharpness) in fsr1 and fsr1-pixel; EASU-only has none
+  const fsrSide = (m: PresentMode): boolean => m === 'fsr1' || m === 'fsr1-pixel';
   function apply(): void {
     target.setPresent(c.mode, c.sharpness);
     target.setCompare?.({ ...c.compare });
@@ -126,7 +127,7 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
     cmpBtn?.setAttribute('aria-pressed', String(c.compare.on));
     if (sharp) {
       sharp.value = String(c.sharpness);
-      sharp.hidden = c.compare.on || c.mode !== 'fsr1';
+      sharp.hidden = c.compare.on || !fsrSide(c.mode);
     }
     if (shA) {
       shA.value = String(c.compare.sharpA);

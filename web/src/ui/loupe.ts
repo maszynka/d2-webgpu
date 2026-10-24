@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Loupe controls: bar button + zoom select + "src" toggle, hotkey (Backquote), Ctrl+wheel zoom and pointer tracking.
+// Loupe controls: bar button + zoom select + "src" toggle, hotkey (Ctrl+Shift+L), Ctrl+wheel zoom and pointer tracking.
 // The square itself is drawn by the renderer on the canvas (Renderer.setLoupe), so it never takes pointer events.
 import { DEFAULT_LOUPE_SIZE, DEFAULT_LOUPE_ZOOM, LOUPE_ZOOMS, clampLoupeSize, clampLoupeZoom, stepLoupeZoom } from '../gpu/loupe';
 import type { LoupeState } from '../gpu/renderer';
@@ -72,8 +72,12 @@ export function bindLoupe(target: Target, canvas: HTMLCanvasElement, params: URL
       const r = canvas.getBoundingClientRect();
       const t = e.target as Element | null;
       inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom && !t?.closest('#bar');
-      px = ((e.clientX - r.left) / r.width) * canvas.width;
-      py = ((e.clientY - r.top) / r.height) * canvas.height;
+      const nx = ((e.clientX - r.left) / r.width) * canvas.width;
+      const ny = ((e.clientY - r.top) / r.height) * canvas.height;
+      if (r.width > 0 && r.height > 0 && Number.isFinite(nx) && Number.isFinite(ny)) {
+        px = nx;
+        py = ny;
+      } else inside = false;
       push();
     },
     { capture: true, passive: true },

@@ -45,7 +45,7 @@ test('layout: a 32 px bar and a surface that fills the rest, no scrollbars', asy
   await expect(page.locator('#game-status')).toContainText('No game folder');
 });
 
-test('debug overlay: hidden by default, ?debug=1 / F9 / button, remembered', async ({ page }) => {
+test('debug overlay: hidden by default, ?debug=1 / Ctrl+Shift+G / button, remembered', async ({ page }) => {
   await ready(page);
   await expect(page.locator('#debug')).toBeHidden();
   await page.goto('/?debug=1');
@@ -54,10 +54,10 @@ test('debug overlay: hidden by default, ?debug=1 / F9 / button, remembered', asy
   await expect(page.locator('#debug')).toContainText('adapter:');
   await expect(page.locator('#debug')).toContainText('present:');
   await page.screenshot({ path: `${process.env['D2_SHOT_DIR'] ?? 'test-results'}/res-debug-overlay.png` });
-  await page.keyboard.press('F9');
+  await page.keyboard.press('Control+Shift+KeyG');
   await expect(page.locator('#debug')).toBeHidden();
   await expect(page.locator('#debug-btn')).toHaveAttribute('aria-pressed', 'false');
-  await page.keyboard.press('F9');
+  await page.keyboard.press('Control+Shift+KeyG');
   await expect(page.locator('#debug')).toBeVisible();
   await page.goto('/');
   await expect(page.locator('#debug')).toBeVisible();
@@ -129,7 +129,7 @@ test('resizing keeps the backing store at device pixels and the picture alive', 
   expect(errors.filter((e) => !/favicon/i.test(e))).toEqual([]);
 });
 
-test('fullscreen: the bar becomes an auto-hiding overlay, F11 toggles', async ({ page }) => {
+test('fullscreen: the bar becomes an auto-hiding overlay, Ctrl+Shift+F / Alt+Enter toggle', async ({ page }) => {
   await page.addInitScript(() => {
     // headless Chromium may refuse real fullscreen: emulate the element + event
     const w = window as unknown as { __fsEl: Element | null };
@@ -162,18 +162,44 @@ test('fullscreen: the bar becomes an auto-hiding overlay, F11 toggles', async ({
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar), { timeout: 3000 }).toBe('overlay-visible');
   await page.mouse.move(400, 300);
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar), { timeout: 5000 }).toBe('overlay-hidden');
-  await page.keyboard.press('F11');
+  await page.keyboard.press('Control+Shift+KeyF');
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar)).toBe('inflow');
   await page.keyboard.press('Alt+Enter');
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(true);
 });
 
-test('keyboard: F10 reveals the bar and focuses the mode select', async ({ page }) => {
+test('keyboard: Ctrl+Shift+B reveals the bar and focuses the mode select; from a select it collapses it again', async ({ page }) => {
   await ready(page);
   await page.locator('canvas#view').focus();
-  await page.keyboard.press('F10');
+  await page.keyboard.press('Control+Shift+KeyB');
   await expect(page.locator('#mode')).toBeFocused();
+  // no focus guard: the chord also works with focus on a select (it hides the revealed overlay bar again)
+  await page.keyboard.press('Control+Shift+KeyB');
+  await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar)).not.toBe('overlay-visible');
+});
+
+test('hotkeys: F9-F12 and Backquote are not ours (D2 binds them); Ctrl+Shift chords work from a focused select; opt-out keeps them for the game', async ({ page }) => {
+  await ready(page);
+  await page.locator('canvas#view').focus();
+  await page.evaluate(() => {
+    const out: Record<string, boolean> = {};
+    (window as unknown as { __kd: Record<string, boolean> }).__kd = out;
+    // bubble phase on window: runs after the page's capture listener, so a swallowed key never gets here -> record only seen ones
+    window.addEventListener('keydown', (e) => (out[e.code] = e.defaultPrevented));
+  });
+  for (const k of ['F9', 'F10', 'F11', 'F12', 'Backquote']) await page.keyboard.press(k);
+  const kd = await page.evaluate(() => (window as unknown as { __kd: Record<string, boolean> }).__kd);
+  for (const k of ['F9', 'F10', 'F11', 'F12', 'Backquote']) expect(kd[k], k).toBe(false); // reached the game's phase, not prevented
+  await expect(page.locator('#debug')).toBeHidden();
+  // Ctrl+Shift+G from a focused select
+  await page.locator('#mode').focus();
+  await page.keyboard.press('Control+Shift+KeyG');
+  await expect(page.locator('#debug')).toBeVisible();
+  // opt-out
+  await page.evaluate(() => ((document.getElementById('hotkeys') as HTMLInputElement).checked = false));
+  await page.keyboard.press('Control+Shift+KeyG');
+  await expect(page.locator('#debug')).toBeVisible();
 });
 
 test('without WebGPU: the notice, a disabled file picker, About still reachable', async ({ page }) => {

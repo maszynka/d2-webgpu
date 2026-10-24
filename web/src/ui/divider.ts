@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The A/B compare divider: a draggable / keyboard-adjustable handle over the stage plus the "A: ..." / "B: ..." chips.
-// Only the handle takes pointer events; everything else over the canvas ignores them, so game clicks pass through.
+// Only the 36px thumb takes pointer events; everything else over the canvas ignores them, so game clicks pass through.
 import { SPLIT_MAX, SPLIT_MIN, clampSplit } from '../gpu/compare';
 import { presentLabel } from '../gpu/fsr';
 import type { PresentControls } from './present';
@@ -22,21 +22,22 @@ export function splitFromKey(split: number, key: string, shift: boolean): number
 }
 
 export function bindDivider(ctl: PresentControls, canvas: HTMLCanvasElement, afterDrag: () => void): { update(): void } {
-  const handle = document.getElementById('cmp-divider') as HTMLElement | null;
+  const strip = document.getElementById('cmp-divider') as HTMLElement | null;
+  const handle = document.getElementById('cmp-thumb') as HTMLElement | null;
   const chipA = document.getElementById('cmp-chip-a') as HTMLElement | null;
   const chipB = document.getElementById('cmp-chip-b') as HTMLElement | null;
   const stage = document.getElementById('stage');
-  if (!handle || !stage) return { update: () => undefined };
+  if (!strip || !handle || !stage) return { update: () => undefined };
 
   const update = (): void => {
     const on = ctl.compare.on;
-    handle.hidden = !on;
+    strip.hidden = !on;
     if (chipA) chipA.hidden = !on;
     if (chipB) chipB.hidden = !on;
     stage.classList.toggle('cmp', on);
     if (!on) return;
     const s = ctl.compare.split;
-    handle.style.left = `${s * 100}%`;
+    strip.style.left = `${s * 100}%`;
     handle.setAttribute('aria-valuenow', String(Math.round(s * 100)));
     const w = canvas.clientWidth;
     if (chipA) {
@@ -52,6 +53,7 @@ export function bindDivider(ctl: PresentControls, canvas: HTMLCanvasElement, aft
   new ResizeObserver(update).observe(canvas);
 
   let dragging = false;
+  let moved = false;
   const move = (e: PointerEvent): void => {
     const r = canvas.getBoundingClientRect();
     ctl.setSplit(splitFromPointer(e.clientX, r.left, r.width), false);
@@ -59,21 +61,23 @@ export function bindDivider(ctl: PresentControls, canvas: HTMLCanvasElement, aft
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    moved = false;
     handle.setPointerCapture(e.pointerId);
     handle.focus({ preventScroll: true });
     e.preventDefault();
     e.stopPropagation();
-    move(e);
   });
   handle.addEventListener('pointermove', (e) => {
-    if (dragging) move(e);
+    if (!dragging) return;
+    moved = true;
+    move(e);
   });
   const end = (e: PointerEvent): void => {
     if (!dragging) return;
     dragging = false;
     ctl.setSplit(ctl.compare.split, true); // persist
     if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
-    afterDrag();
+    if (moved) afterDrag(); // hand focus back to the game only after a real drag, not a plain click on the thumb
   };
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);

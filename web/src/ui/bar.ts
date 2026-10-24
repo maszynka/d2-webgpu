@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The top bar's placement: in flow above the surface until the game runs (or fullscreen), then an overlay that hides
-// itself and comes back on the hot edge / F10 / when pinned or held (docs/design/ui.md section 2).
+// itself and comes back on the hot edge / Ctrl+Shift+B / when pinned or held (docs/design/ui.md section 2).
 
 export type BarState = 'inflow' | 'overlay-visible' | 'overlay-hidden';
 

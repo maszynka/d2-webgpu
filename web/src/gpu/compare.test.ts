@@ -55,7 +55,7 @@ describe('FSR1 (pixel-art) prescale', () => {
     expect(planPresent('fsr1-pixel', 800, 600, 640, 480).pass).toBe('bilinear');
   });
   it('summarises pass and scale for the tooltip', () => {
-    const base = { mode: 'fsr1-pixel', pass: 'easu-rcas', srcW: 800, srcH: 600, canvasW: 2536, canvasH: 1902, rect: { x: 0, y: 0, w: 2536, h: 1902 }, gpuMs: null, compare: null, loupe: null, prescale: 3 } as never;
+    const base = { mode: 'fsr1-pixel', pass: 'easu-rcas', srcW: 800, srcH: 600, canvasW: 2536, canvasH: 1902, rect: { x: 0, y: 0, w: 2536, h: 1902 }, gpuMs: null, gpuParts: [], chains: 0, compare: null, loupe: null, prescale: 3 } as never;
     expect(presentSummary(base)).toBe('fsr1-pixel \u00b7 easu-rcas \u00b7 3.17\u00d7 (3\u00d7 nearest + 1.06\u00d7 EASU)');
   });
 });
@@ -156,7 +156,7 @@ describe('loupe', () => {
 });
 
 describe('HUD', () => {
-  const info = { mode: 'fsr1', pass: 'easu-rcas', srcW: 1066, srcH: 600, canvasW: 1920, canvasH: 1080, rect: { x: 0, y: 0, w: 1919, h: 1080 }, gpuMs: 0.5, compare: null, loupe: null, prescale: 1 } as const;
+  const info = { mode: 'fsr1', pass: 'easu-rcas', srcW: 1066, srcH: 600, canvasW: 1920, canvasH: 1080, rect: { x: 0, y: 0, w: 1919, h: 1080 }, gpuMs: 0.5, gpuParts: [{ side: 0, label: 'EASU+RCAS', ms: 0.5 }], chains: 1, compare: null, loupe: null, prescale: 1 } as const;
   it('shows fps, resolutions, scale and mode', () => {
     const t = formatHud({ fps: 59.96, gameFps: 29.7, info: info as never, dpr: 2 });
     expect(t).toContain('60.0 fps');
@@ -166,12 +166,18 @@ describe('HUD', () => {
     expect(t).toContain('x1.80');
     expect(t).toContain('dpr 2');
     expect(t).toContain('mode FSR1 (easu-rcas)');
-    expect(t).toContain('gpu 0.50 ms');
+    expect(t).toContain('gpu 0.50 ms (EASU+RCAS)');
   });
   it('shows both modes in compare', () => {
-    const t = formatHud({ fps: 1, gameFps: null, info: { ...info, gpuMs: null, compare: { a: 'bilinear', b: 'fsr1', passA: 'bilinear', passB: 'easu-rcas', splitPx: 960, prescaleA: 1, prescaleB: 3 } } as never, dpr: 1 });
+    const t = formatHud({ fps: 1, gameFps: null, info: { ...info, gpuMs: null, gpuParts: [], compare: { a: 'bilinear', b: 'fsr1', passA: 'bilinear', passB: 'easu-rcas', splitPx: 960, prescaleA: 1, prescaleB: 3 } } as never, dpr: 1 });
     expect(t).toContain('A Bilinear (bilinear) | B FSR1 (easu-rcas, 3x pre)');
     expect(t).toContain('gpu - ms');
+  });
+  it('labels the timed span per side in compare', () => {
+    const cmp = { a: 'easu', b: 'fsr1-pixel', passA: 'easu', passB: 'easu-rcas', splitPx: 960, prescaleA: 1, prescaleB: 3 };
+    const parts = [{ side: 0, label: 'EASU', ms: 0.2 }, { side: 1, label: 'prescale+EASU+RCAS', ms: 0.9 }];
+    const t = formatHud({ fps: 1, gameFps: null, info: { ...info, gpuMs: 1.1, gpuParts: parts, compare: cmp } as never, dpr: 1 });
+    expect(t).toContain('A gpu 0.20 ms (EASU) / B gpu 0.90 ms (prescale+EASU+RCAS)');
   });
   it('rate meter smooths a counter', () => {
     const m = new RateMeter();

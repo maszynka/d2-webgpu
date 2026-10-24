@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // HUD: a small top-left overlay with the presented FPS, source / output resolution, the active mode(s) and GPU time.
-// Separate from the F9 debug overlay; off by default, on with compare (unless the user switched it off).
+// Separate from the Ctrl+Shift+G debug overlay; off by default, on with compare (unless the user switched it off).
 import { presentLabel } from '../gpu/fsr';
 import type { PresentInfo } from '../gpu/renderer';
 
@@ -22,6 +22,15 @@ export function presentSummary(p: PresentInfo): string {
   return one(p.mode, p.pass, p.prescale);
 }
 
+/** "gpu 0.50 ms (EASU+RCAS)"; in compare per side: "A gpu 0.4 ms (EASU) / B gpu 0.5 ms (prescale+EASU+RCAS)"; "gpu - ms" without a measurement. */
+export function gpuLine(p: PresentInfo): string {
+  const parts = p.gpuParts ?? [];
+  if (parts.length === 0) return 'gpu - ms';
+  const f = (x: { label: string; ms: number }): string => `gpu ${x.ms.toFixed(2)} ms (${x.label})`;
+  if (!p.compare) return f(parts[0]!);
+  return parts.map((x) => `${x.side === 0 ? 'A' : 'B'} ${f(x)}`).join(' / ');
+}
+
 export function formatHud(s: HudSample): string {
   const p = s.info;
   const lines: string[] = [];
@@ -32,7 +41,7 @@ export function formatHud(s: HudSample): string {
   lines.push(`output ${p.canvasW}x${p.canvasH} px  frame ${p.rect.w}x${p.rect.h}  x${scale.toFixed(2)}  dpr ${s.dpr}`);
   if (p.compare) lines.push(`A ${presentLabel(p.compare.a)} (${p.compare.passA}${p.compare.prescaleA > 1 ? `, ${p.compare.prescaleA}x pre` : ''}) | B ${presentLabel(p.compare.b)} (${p.compare.passB}${p.compare.prescaleB > 1 ? `, ${p.compare.prescaleB}x pre` : ''})  split ${p.compare.splitPx}px`);
   else lines.push(`mode ${presentLabel(p.mode)} (${p.pass}${p.prescale > 1 ? `, ${p.prescale}x nearest prescale` : ''})`);
-  lines.push(p.gpuMs !== null ? `gpu ${p.gpuMs.toFixed(2)} ms (EASU+RCAS)` : 'gpu - ms');
+  lines.push(gpuLine(p));
   return lines.join('\n');
 }
 
@@ -99,8 +108,9 @@ export function bindHud(params: URLSearchParams, read: (k: string) => string | n
       if (now - tipAt > 500) {
         tipAt = now;
         if (info) {
+          // the selects keep their own title; the live pass / scale summary is a separate attribute appended on hover
           const tip = presentSummary(info);
-          for (const id of ['present', 'cmp-a', 'cmp-b']) document.getElementById(id)?.setAttribute('title', tip);
+          for (const id of ['present', 'cmp-a', 'cmp-b']) document.getElementById(id)?.setAttribute('data-summary', tip);
         }
       }
       if (!on() || !el || now - at < 250) return;
@@ -113,6 +123,16 @@ export function bindHud(params: URLSearchParams, read: (k: string) => string | n
     },
   };
   btn?.addEventListener('click', () => ctl.toggle());
+  // tooltip = the control's own description + the live summary (set on hover, so the base title stays untouched)
+  for (const id of ['present', 'cmp-a', 'cmp-b']) {
+    const sel = document.getElementById(id);
+    if (!sel) continue;
+    const base = sel.getAttribute('title') ?? '';
+    sel.addEventListener('mouseenter', () => {
+      const sum = sel.getAttribute('data-summary');
+      sel.setAttribute('title', sum ? (base ? `${base}\n${sum}` : sum) : base);
+    });
+  }
   apply();
   return ctl;
 }

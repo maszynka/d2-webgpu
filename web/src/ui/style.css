@@ -92,10 +92,12 @@ body.playing canvas#view:focus-visible { outline: none; }
 #cmp-chips { position: absolute; top: 8px; left: 8px; right: 8px; z-index: 4; display: flex; justify-content: space-between; pointer-events: none; }
 .chip { padding: 3px 7px; font: var(--mono); background: rgb(0 0 0 / 0.72); border: 1px solid var(--ctl-line); border-radius: var(--radius); }
 .chip[hidden] { display: none; }
-#cmp-divider { position: absolute; top: 0; bottom: 0; width: 14px; margin-left: -7px; z-index: 6; cursor: col-resize; touch-action: none; }
+/* the strip itself and its 2px line are visual only (pointer-events: none: game clicks pass through); only the thumb is interactive */
+#cmp-divider { position: absolute; top: 0; bottom: 0; width: 14px; margin-left: -7px; z-index: 4; pointer-events: none; }
 #cmp-divider[hidden] { display: none; }
 #cmp-divider::before { content: ''; position: absolute; left: 6px; top: 0; bottom: 0; width: 2px; background: var(--acc); box-shadow: 0 0 0 1px rgb(0 0 0 / 0.6); }
-#cmp-divider::after { content: ''; position: absolute; left: 0; top: calc(50% - 18px); width: 14px; height: 36px; box-sizing: border-box; background: var(--acc);
-  border: 1px solid rgb(0 0 0 / 0.7); border-radius: 7px; }
-#cmp-divider:focus-visible { outline: none; }
-#cmp-divider:focus-visible::after { outline: 2px solid #fff; outline-offset: 1px; }
+#cmp-thumb { position: absolute; left: 0; top: calc(50% - 18px); width: 14px; height: 36px; box-sizing: border-box; background: var(--acc);
+  border: 1px solid rgb(0 0 0 / 0.7); border-radius: 7px; cursor: col-resize; touch-action: none; pointer-events: auto; }
+#cmp-thumb:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+/* an overlay card (missing archives, game stopped) hides the divider */
+#stage:has(.overlay:not([hidden])) #cmp-divider { display: none; }

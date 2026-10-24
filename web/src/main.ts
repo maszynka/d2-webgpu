@@ -290,25 +290,35 @@ async function main(): Promise<void> {
     'keydown',
     (e) => {
       if (!panel.hotkeys) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      // Ctrl+Shift chords (D2's default keys are F1-F12 skills/automap, letters, digits, Tab, Esc, Enter, Space, `;
+      // see keyconfig.hpp) plus Alt+Enter. None of them types a character, so no focus guard: they also work from a
+      // focused select or slider.
+      const chord = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
       let hit = true;
-      if (e.code === 'F11' || (e.altKey && e.code === 'Enter')) void fullscreen.toggle();
-      else if (e.code === 'F10') {
-        // toggles in play: hiding hands focus back to the game (bar.onHidden)
-        if (bar.state === 'overlay-visible') {
-          panel.closePopovers();
-          bar.hideNow();
-          // closing a popover that held focus already dropped it to body, so onHidden may not have fired
-          if (full) canvas.focus({ preventScroll: true });
-        } else {
-          bar.reveal();
-          $<HTMLSelectElement>('mode').focus();
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'Enter') {
+        if (!e.repeat) void fullscreen.toggle();
+      } else if (!chord) hit = false;
+      else if (e.code === 'KeyF') {
+        if (!e.repeat) void fullscreen.toggle();
+      } else if (e.code === 'KeyB') {
+        if (!e.repeat) {
+          // toggles in play: hiding hands focus back to the game (bar.onHidden)
+          if (bar.state === 'overlay-visible') {
+            panel.closePopovers();
+            bar.hideNow();
+            // closing a popover that held focus already dropped it to body, so onHidden may not have fired
+            if (full) canvas.focus({ preventScroll: true });
+          } else {
+            bar.reveal();
+            $<HTMLSelectElement>('mode').focus();
+          }
         }
-      } else if (e.code === 'F9') setDebug(debug.hidden !== false);
-      // Backquote is unbound in D2 (F1-F8 skills, F9-F12 unbound; controls.cpp maps it but no default action uses it)
-      else if (e.code === 'Backquote' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        if (e.shiftKey) hud.toggle();
-        else loupeCtl.toggle();
+      } else if (e.code === 'KeyG') {
+        if (!e.repeat) setDebug(debug.hidden !== false);
+      } else if (e.code === 'KeyL') {
+        if (!e.repeat) loupeCtl.toggle();
+      } else if (e.code === 'KeyH') {
+        if (!e.repeat) hud.toggle();
       } else hit = false;
       if (!hit) return;
       swallowed.add(e.code);

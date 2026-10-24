@@ -151,7 +151,7 @@ added for this document. The numbers above are test counts only.
 | Spec | Tests | Covers | Needs real data |
 | --- | --- | --- | --- |
 | `e2e/smoke.spec.ts` | 5 | demo scene renders without console errors; lighting modes render and change the picture; presentation modes (FSR1/nearest/bilinear) render and differ; canvas fills a 1920x1080 viewport; Fullscreen button (mocked API). GPU tests skip when headless Chromium has no WebGPU. | no |
-| `e2e/ui.spec.ts` | 10 | 32 px bar and full-surface layout; debug overlay (`?debug=1`/F9); mode select and tools popover; presentation controls persist across reload; resize keeps device-pixel backing store; fullscreen overlay and F11; F10 keyboard reveal; no-WebGPU notice; drop zone; bar screenshot. | no |
+| `e2e/ui.spec.ts` | 11 | 32 px bar and full-surface layout; debug overlay (`?debug=1`/Ctrl+Shift+G); mode select and tools popover; presentation controls persist across reload; resize keeps device-pixel backing store; fullscreen overlay and Ctrl+Shift+F; Ctrl+Shift+B keyboard reveal; hotkeys leave D2's F9-F12/Backquote alone; no-WebGPU notice; drop zone; bar screenshot. | no |
 | `e2e/mpq.spec.ts` | 1 | synthetic MPQ through the folder input and the DC6 viewer (needs wasm build and `wasm/test.sh` fixtures). | no (synthetic) |
 | `e2e/full.spec.ts` | 5 | title screen and character screens; **F2 scenario** (new character, camp, click-to-walk, held-button walk, Shift-click, Blood Moor via `debug goto 2`, melee, Save and Exit, page reload, character listed); wider-than-800 view with FSR1 and nearest; UI autoplay, auto-hiding bar, native width follows the page; optional archives (game runs without sound/video MPQs). | **yes** (`D2_MPQ_DIR`) |
 
@@ -188,7 +188,7 @@ From `docs/full-game-status.md` ("Otwarte") and the research docs:
 * **Hidden tab:** the game pauses (frame mailbox); simulation does not catch up; C++ audio clocks keep running.
 * **Saves:** an IDBFS sync started right before runtime exit never completes; a final flush waits 1.5 s and repeats it.
   `terminate()` can log an "IDBDatabase ... closing" console noise.
-* **Fullscreen:** SDL's Alt+Enter has no effect on the dummy driver; the page handles F11/Alt+Enter itself.
+* **Fullscreen:** SDL's Alt+Enter has no effect on the dummy driver; the page handles Alt+Enter / Ctrl+Shift+F itself.
 * **Resolution:** height fixed at 600 and width capped at 1400 (`kScreenHeight`/`kMaxViewWidth` are `constexpr` upstream); raising
   them needs a patch and a review of edge-anchored panels (upstream notes this as unfinished).
 * **Version skew:** data are about 1.13c while upstream targets 1.14d; expect `check_patch_layer` warnings.

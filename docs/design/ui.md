@@ -116,9 +116,9 @@ Remove: the old `<header>` subtitle sentence, the `<footer>` (moved into the Abo
 ### 2.4 Auto-hide / reveal in S4
 * Hidden 1.5 s after the first game frame, and 1.5 s after the pointer leaves the bar (and its popovers are closed).
 * Reveal when: pointer within the top **3 px** of the viewport for ≥ 250 ms (`pointermove`, `clientY <= 3`, timer;
-  this keeps accidental sweeps through the top rows of the game out); or `F10`; or any popover is open; or
+  this keeps accidental sweeps through the top rows of the game out); or `Ctrl+Shift+B`; or any popover is open; or
   `#pin-btn` is pressed (then it stays until unpinned); or the game fails (E4).
-* Keyboard focus moving into the bar (Tab from the canvas is swallowed by the game, so only via F10) also reveals it.
+* Keyboard focus moving into the bar (Tab from the canvas is swallowed by the game, so only via Ctrl+Shift+B) also reveals it.
 * While hidden `aria-hidden="true"` and `inert` on the bar (no stray focus).
 
 ### 2.5 Keyboard shortcuts
@@ -128,15 +128,18 @@ swallowed, so `d2web` key state cannot get stuck). Nothing else is intercepted.
 
 | Key | Action | Why it is safe |
 |---|---|---|
-| `F11` | toggle fullscreen | D2 binds F1–F8 by default; F9–F12 are unbound. Browser's own F11 is the whole-window mode, we replace it with element fullscreen of `#stage` (same visual result, our bar logic applies). |
-| `Alt+Enter` | toggle fullscreen | D2's own fullscreen chord (SDL); on the `dummy` driver it does nothing today (`docs/full-game-status.md` "Otwarte"), so we own it. Also works on macOS where F11 may be taken by the OS. |
-| `F10` | reveal/hide the bar (S4); focus `#mode` when revealed | unbound in D2; Windows/Chrome "focus menu" is prevented. |
-| `F9` | toggle debug overlay | unbound in D2. |
+| `Alt+Enter`, `Ctrl+Shift+F` | toggle fullscreen | Alt+Enter is D2's own fullscreen chord (SDL); on the `dummy` driver it does nothing today (`docs/full-game-status.md` "Otwarte"), so we own it. Plain `F11` is **not** intercepted (D2: party on automap; the browser's own F11 stays the browser's). |
+| `Ctrl+Shift+B` | reveal/hide the bar (S4); focus `#mode` when revealed | not a D2 key (D2's `F10` = fade automap is left alone). |
+| `Ctrl+Shift+G` | toggle debug overlay | not a D2 key (D2 `F9` = centre automap is left alone). |
+| `Ctrl+Shift+L` | toggle the loupe | not a D2 key (D2's `` ` `` Backquote = show belt is left alone). |
+| `Ctrl+Shift+H` | toggle the HUD | not a D2 key. |
 | `Esc` | **never** intercepted (D2 menu) | in fullscreen see §2.6 |
 
-Not used: plain letters, digits, Tab, Space, Shift/Ctrl/Alt chords with letters (D2 and browser use them), `Ctrl+Shift+…`
-(browser-owned in several browsers). If the player has rebound F9–F11 in D2, the bar still works via the hot edge and
-buttons; an opt-out `d2.hotkeys='0'` (tools popover checkbox "Keep F9–F11 for the game") disables all three.
+Not used: plain letters, digits, Tab, Space, `F1`-`F12`, Backquote (D2's `keyconfig.hpp` defaults: F1-F8 skills, F9-F12 automap
+centre/fade/party/names, `` ` `` belt). The chords are Ctrl+Shift+letter (no Alt/Meta); none types a character, so there is
+**no focus guard**: they work with focus on a select or slider too. If the player has rebound those chords in D2, the bar
+still works via the hot edge and buttons; an opt-out `d2.hotkeys='0'` (tools popover checkbox "Ctrl+Shift+L/H/G/B/F for the
+page") disables all of them, Alt+Enter included.
 
 ### 2.6 Fullscreen
 * Element: `#stage` (the wrapper of canvas + overlays + bar), **not** the canvas, so the bar/popovers/error cards
@@ -144,7 +147,7 @@ buttons; an opt-out `d2.hotkeys='0'` (tools popover checkbox "Keep F9–F11 for 
 * On `fullscreenchange` (entering): `navigator.keyboard?.lock(['Escape'])` (Chromium; ignore rejection) so `Esc`
   reaches the game menu instead of leaving fullscreen. Chrome still exits on a **held** Esc (≈ 2 s) and says so in
   its own toast — that is the documented escape hatch. Leaving: `navigator.keyboard?.unlock()`.
-* Exit: `F11` / `Alt+Enter` / `#fs-btn` in the revealed bar / hold Esc / browser gesture. `#fs-btn` reflects
+* Exit: `Ctrl+Shift+F` / `Alt+Enter` / `#fs-btn` in the revealed bar / hold Esc / browser gesture. `#fs-btn` reflects
   `document.fullscreenElement !== null` (`aria-pressed`), and `window.__d2.fullscreen = boolean` for tests.
 * Bar rules in fullscreen are the S4 rules (overlay, auto-hide). Not in S4 (demo/map in fullscreen): bar is still
   shown as overlay with auto-hide so the scene is uninterrupted.
@@ -159,7 +162,7 @@ buttons; an opt-out `d2.hotkeys='0'` (tools popover checkbox "Keep F9–F11 for 
   popover keep focus until the popover closes (Esc inside a popover closes it — handled by the popover, not the game,
   because the canvas is not focused then).
 * `#game-status` is never focusable. Bar controls are reachable by Tab **only while the bar is visible and focused**
-  (F10 → first control); from the game, Tab is the automap, untouched.
+  (Ctrl+Shift+B → first control); from the game, Tab is the automap, untouched.
 * On `blur` of the window the game already releases keys (`EV.blur`).
 
 ### 2.8 Compare, loupe, HUD (added 2026-10-24)
@@ -170,9 +173,9 @@ resolution, and a magnifier square where I just see the enlarged pixels."*
 | Control (bar, left to right after the status) | id | What it does |
 |---|---|---|
 | `Compare` toggle | `#cmp-btn` | on: the frame is presented twice into the same canvas, mode A left of a vertical divider, mode B right. `#present` is replaced by `#cmp-a`, `#cmp-b` (all modes), a sharpness slider per FSR1 side (`#cmp-sharp-a/b`) and `#cmp-preset` ("FSR1 vs Bilinear", "EASU only vs Bilinear"). Defaults A = Nearest (stretch), B = FSR1. |
-| Divider | `#cmp-divider` (`role=slider`) | the only thing in compare that takes pointer events: drag it (the game never sees the press), or focus it and use Left/Right (1 %), Shift+arrows (10 %), Home/End. Position persists (`d2.cmpSplit`). Chips `A: <mode>` / `B: <mode>` sit at the top of each side (hidden when a side is narrower than 90 px). |
-| `Loupe`, zoom select (2x..16x), `src` | `#loupe-btn`, `#loupe-zoom`, `#loupe-src` | a 256 CSS-px square (`?loupeSize=`, 64..768) follows the pointer (24 px offset, flips/clamps at the canvas edges) and shows the composed output under it magnified with nearest sampling: blocks of k x k identical pixels, a magenta outline round the pixel under the pointer, so near the divider both sides are visible. `src` shows the native frame's pixels at the same place instead. Zoom: select, or **Ctrl+wheel** while the loupe is on (the game never gets a Ctrl+wheel; plain wheel stays the game's). The loupe is drawn on the canvas, takes no pointer events. |
-| `HUD` | `#hud-btn`, `#hud` | top-left (below the A chip in compare): presented fps (smoothed, from present calls; plus game frames received/s in the game), source `WxH`, output px, frame rect, scale, dpr, mode(s) with pass and nearest prescale, GPU ms (EASU+RCAS, only with `timestamp-query`). Off by default, on with compare unless switched off by the user. Not part of the F9 debug overlay. |
+| Divider | `#cmp-divider` (strip + 2 px line, `pointer-events: none`, below the overlay cards, hidden while one is shown) with the thumb `#cmp-thumb` (`role=slider`, 14x36 px) | the thumb is the only thing in compare that takes pointer events: drag it (the game never sees the press; the canvas is refocused only after a real drag), or focus it and use Left/Right (1 %), Shift+arrows (10 %), Home/End. Position persists (`d2.cmpSplit`). Chips `A: <mode>` / `B: <mode>` sit at the top of each side (hidden when a side is narrower than 90 px). |
+| `Loupe`, zoom select (2x..16x), `src` | `#loupe-btn`, `#loupe-zoom`, `#loupe-src` | a 256 CSS-px square (`?loupeSize=`, 64..768) follows the pointer (24 px offset, flips/clamps at the canvas edges) and shows the composed output under it magnified with nearest sampling: blocks of k x k identical pixels, a magenta outline round the pixel under the pointer (in `src` mode: round the source pixel under it), so near the divider both sides are visible. `src` shows the native frame's pixels at the same place instead. Zoom: select, or **Ctrl+wheel** while the loupe is on (the game never gets a Ctrl+wheel; plain wheel stays the game's). The loupe is drawn on the canvas, takes no pointer events. |
+| `HUD` | `#hud-btn`, `#hud` | top-left (below the A chip in compare): presented fps (smoothed, from present calls; plus game frames received/s in the game), source `WxH`, output px, frame rect, scale, dpr, mode(s) with pass and nearest prescale, GPU ms labelled by what was timed (`EASU`, `EASU+RCAS`, `prescale+EASU+RCAS`; in compare per side: `A gpu .. / B gpu ..`; only with `timestamp-query`). The select tooltips keep their own text; the live pass/scale summary is appended on hover. Off by default, on with compare unless switched off by the user. Not part of the Ctrl+Shift+G debug overlay. |
 
 Modes (`PRESENT_MODES`, `?present=`): `fsr1`, `fsr1-pixel` (integer nearest prescale by floor(scale), then EASU+RCAS for the
 rest; = fsr1 below 2x), `easu` (EASU only, no RCAS), `bilinear`, `nearest` (integer), `nearest-stretch` (fractional fit,
@@ -181,10 +184,9 @@ In compare mode both sides use the fractional fit rect (so pixels line up): near
 nearest sampling in that rect there. URL: `?compare=1&cmpA=&cmpB=&split=0.5&sharpA=&sharpB=&loupe=1&loupeZoom=8&loupeSrc=1&hud=1`
 (URL wins for that load, not written back).
 
-Hotkeys (same capture listener as 2.5, ignored while a text input / select has focus, off with the "F9-F11 for the page"
-checkbox): **`` ` `` (Backquote)** loupe, **Shift+`` ` ``** HUD. Why: D2's defaults use F1-F8, letters, digits, Tab, Alt, Ctrl,
-Shift, Esc, Enter, Space; upstream `controls.cpp` can map Backquote but binds no default action to it; F9/F10/F11 are ours;
-F12 is the browser's devtools. No hotkey for Compare (bar button / divider).
+Hotkeys (same capture listener as 2.5, no focus guard, off with the "Ctrl+Shift+L/H/G/B/F for the page" checkbox):
+**Ctrl+Shift+L** loupe, **Ctrl+Shift+H** HUD. No hotkey for Compare (bar button / divider). Sharpness sliders show for
+`fsr1` and `fsr1-pixel` (RCAS); `easu` has none.
 
 Implementation: `gpu/compare.ts` (plan + scissors), `gpu/loupe.ts` (layout, zoom steps, source index), `shaders/loupe.wgsl`,
 `Renderer.encodePresent` (one pass per side with that side's scissor; with the loupe on the output goes to an offscreen
@@ -249,7 +251,7 @@ debounced) → (3) nothing else; the per-frame present already recomputes the fi
 ## 4. Debug overlay
 
 * `#debug` `<pre>` stays (id and `aria-label` unchanged) but gets `hidden` by default; shown when `d2.debug==='1'`,
-  `?debug=1`, `F9`, or `#debug-btn`. Position: `top: calc(var(--bar-h) + 8px)` in S0–S3, `top: 8px` in S4 (the bar
+  `?debug=1`, `Ctrl+Shift+G`, or `#debug-btn`. Position: `top: calc(var(--bar-h) + 8px)` in S0–S3, `top: 8px` in S4 (the bar
   overlays it when revealed); right 8 px; `pointer-events: none` except a small `Copy` button in its corner
   (`pointer-events:auto`) that copies the text + last 50 game log lines.
 * Updates at most 2×/s (existing 0.5 s cadence), never allocates per frame beyond the string.
@@ -357,7 +359,7 @@ no serif display fonts, no glow. The game is the picture; the chrome is a thin f
         <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" /> <output id="ambient-val"></output></label></div>
       <div class="row"><label>volume <input id="volume" type="range" min="0" max="100" /></label>
         <label><input id="autoplay" type="checkbox" checked /> start the game after loading</label>
-        <label><input id="hotkeys" type="checkbox" checked /> F9–F11 for the page (debug, bar, fullscreen)</label></div>
+        <label><input id="hotkeys" type="checkbox" checked /> Ctrl+Shift+L/H/G/B/F for the page (loupe, HUD, debug, bar, fullscreen)</label></div>
     </section>
     <section id="about" class="popover" hidden>GPL-3.0-or-later — source: <a id="src-link"></a> — commit <code id="commit"></code> — upstream d2decomped 7e730f0. No Blizzard data is included; your files never leave your browser.</section>
   </header>
@@ -440,13 +442,13 @@ native: {w,h}, present: {mode, sharpness}, state: 'nofiles'|'reconnect'|'loading
 ### 6.4 Playwright assertions (new `web/e2e/ui.spec.ts`; the first block runs without game data)
 Without data (headless, demo):
 1. `#bar` height is 32 (`boundingBox().height`), `#stage` box top = 32 and `canvas#view` box = `#stage` box; page has no scrollbars (`document.documentElement.scrollHeight === innerHeight`).
-2. `#debug` is hidden by default; `?debug=1` shows it with text containing `adapter:` and `present:`; `F9` toggles `aria-pressed` of `#debug-btn` and `#debug` visibility; the choice persists across `reload()` (localStorage).
+2. `#debug` is hidden by default; `?debug=1` shows it with text containing `adapter:` and `present:`; `Ctrl+Shift+G` toggles `aria-pressed` of `#debug-btn` and `#debug` visibility; the choice persists across `reload()` (localStorage).
 3. `#mode` options `view`, `map`, `play` are `disabled` with no files; `demo` selected; `#tools-btn` click shows `#game-tools`, `Escape` hides it and focus returns to `#tools-btn`.
 4. `#present` select → `nearest`: `window.__d2.ui.present.mode === 'nearest'`, `#sharp` hidden; → `fsr1`: `#sharp` visible; drag `#sharp` to 1 → `present.sharpness === 1`; both survive `reload()`.
 5. Resize viewport 1600×900 → 800×600 → 1600×900: no console errors, `canvas.width === round(clientWidth*dpr)` each time (`page.evaluate`), screenshot colours > 8 after each.
-6. `#fs-btn` click → `document.fullscreenElement === #stage` (headless Chromium allows it), `window.__d2.ui.fullscreen === true`, `#bar` has class `hidden` after 2 s and `window.__d2.ui.bar === 'overlay-hidden'`; mouse move to (400, 1) + 300 ms → `#bar` visible; `F11` → fullscreen off, `#bar` back in flow (`window.__d2.ui.bar === 'inflow'`).
+6. `#fs-btn` click → `document.fullscreenElement === #stage` (headless Chromium allows it), `window.__d2.ui.fullscreen === true`, `#bar` has class `hidden` after 2 s and `window.__d2.ui.bar === 'overlay-hidden'`; mouse move to (400, 1) + 300 ms → `#bar` visible; `Ctrl+Shift+F` → fullscreen off, `#bar` back in flow (`window.__d2.ui.bar === 'inflow'`).
 7. Emulate no WebGPU (`page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }))`): `#nogpu` visible with `role=alert`, `#pick` and `#folder-label` disabled, `#about` reachable via `#brand` and contains `GPL-3.0-or-later`.
-8. Keyboard: with the canvas focused, `Tab`, `F1`, `Space` do **not** move focus off the canvas (`document.activeElement === canvas`); `F10` reveals the bar and focuses `#mode`.
+8. Keyboard: with the canvas focused, `Tab`, `F1`, `Space` do **not** move focus off the canvas (`document.activeElement === canvas`); `Ctrl+Shift+B` reveals the bar and focuses `#mode`.
 9. Drop: `page.dispatchEvent('#stage', 'dragenter', { dataTransfer })` with a `Files` type shows `#drop`; `dragleave` hides it.
 
 With the synthetic MPQ (extends `mpq.spec.ts`; `base.mpq` has only d2data):
@@ -500,7 +502,7 @@ S4 — bar revealed (overlay, game not resized):
 │                                                       [FSR1 ▾] ──●──  ⛶  {}  📌          │
 │ ·································· game continues underneath ··························· │
 ```
-S4 — debug overlay on (F9), top-right:
+S4 — debug overlay on (Ctrl+Shift+G), top-right:
 ```
 │                                               ┌───────────────────────────────────────┐  │
 │                                               │ mode: full game (running)              │  │

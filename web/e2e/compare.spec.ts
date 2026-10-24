@@ -66,7 +66,7 @@ test('compare: the halves differ like their modes (FSR1 sharper than bilinear), 
   expect(p.compare).toMatchObject({ a: 'bilinear', b: 'fsr1', passA: 'bilinear', passB: 'easu-rcas' });
   await expect(page.locator('#cmp-chip-a')).toHaveText('A: Bilinear');
   await expect(page.locator('#cmp-chip-b')).toHaveText('B: FSR1');
-  await expect(page.locator('#cmp-divider')).toBeVisible();
+  await expect(page.locator('#cmp-thumb')).toBeVisible();
   const diff = await halves(page);
 
   // control: the same mode on both sides, to factor out the different picture content left and right
@@ -104,8 +104,8 @@ test('compare: the divider drags (not a game click), moves with the keyboard, an
     w.__cd = 0;
     document.querySelector('canvas#view')!.addEventListener('pointerdown', () => w.__cd++);
   });
-  const h = (await page.locator('#cmp-divider').boundingBox())!;
-  await page.mouse.move(h.x + h.width / 2, 400);
+  const h = (await page.locator('#cmp-thumb').boundingBox())!;
+  await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
   await page.mouse.down();
   await page.mouse.move(400, 400, { steps: 5 });
   await page.mouse.up();
@@ -118,7 +118,7 @@ test('compare: the divider drags (not a game click), moves with the keyboard, an
   await page.mouse.click(900, 400);
   expect(await page.evaluate(() => (window as unknown as { __cd: number }).__cd)).toBe(1);
   // keyboard
-  await page.locator('#cmp-divider').focus();
+  await page.locator('#cmp-thumb').focus();
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('Shift+ArrowRight');
   const k = await page.evaluate(() => window.__d2!.ui!.compare.split);
@@ -147,7 +147,7 @@ test('loupe: magnifies the presented pixels in k x k blocks, also across the div
     expect(L!.zoom).toBe(k);
     expect(L!.box.w).toBe(256);
     const png = await canvasPng(page);
-    const hb = (await page.locator('#cmp-divider').boundingBox())!;
+    const hb = (await page.locator('#cmp-thumb').boundingBox())!;
     const cbox = (await page.locator('canvas#view').boundingBox())!;
     const hx0 = Math.floor(hb.x - cbox.x) - 1;
     const hx1 = Math.ceil(hb.x - cbox.x + hb.width) + 1;
@@ -186,10 +186,10 @@ test('loupe: magnifies the presented pixels in k x k blocks, also across the div
   expect((await page.evaluate(() => window.__d2!.present!.loupe))!.source).toBe(true);
   await page.screenshot({ path: `${shotDir}/cmp-loupe-source.png` });
   // hotkey off / on, and the loupe leaves with the pointer
-  await page.keyboard.press('Backquote');
+  await page.keyboard.press('Control+Shift+KeyL');
   await frames(page);
   expect(await page.evaluate(() => window.__d2!.present!.loupe)).toBeNull();
-  await page.keyboard.press('Backquote');
+  await page.keyboard.press('Control+Shift+KeyL');
   await page.mouse.move(520, 410);
   await frames(page);
   expect(await page.evaluate(() => window.__d2!.present!.loupe)).not.toBeNull();
@@ -207,11 +207,11 @@ test('HUD: source and output resolution, a live fps, mode', async ({ page }) => 
   expect(t).toMatch(/output \d+x\d+ px/);
   expect(t).toMatch(/mode FSR1 \(easu-rcas\)/);
   await page.screenshot({ path: `${shotDir}/cmp-hud.png` });
-  // toggle: button, and Shift+Backquote
+  // toggle: button, and Ctrl+Shift+H
   await page.click('#hud-btn');
   await expect(hud).toBeHidden();
   await page.locator('canvas#view').focus();
-  await page.keyboard.press('Shift+Backquote');
+  await page.keyboard.press('Control+Shift+KeyH');
   await expect(hud).toBeVisible();
 });
 
@@ -289,7 +289,51 @@ test('FSR1 (pixel-art): integer nearest prescale then EASU, crisper than plain F
   const e = await halves(page);
   console.log(`pixel-art at ~2.1x: edge metric FSR1 ${e.a.toFixed(2)} | FSR1 (pixel-art) ${e.b.toFixed(2)}`);
   expect(e.b).toBeGreaterThan(e.a * 1.05);
-  await expect(page.locator('#cmp-b')).toHaveAttribute('title', /fsr1-pixel · easu-rcas · 2\.\d+× \(2× nearest/);
+  await expect(page.locator('#cmp-b')).toHaveAttribute('data-summary', /fsr1-pixel · easu-rcas · 2\.\d+× \(2× nearest/);
+  await page.locator('#cmp-b').hover();
+  await expect(page.locator('#cmp-b')).toHaveAttribute('title', /^B: right of the divider\n.*fsr1-pixel/);
   await page.screenshot({ path: `${shotDir}/cmp-pixel-art.png` });
   expect(errors.filter((x) => !/favicon/i.test(x))).toEqual([]);
+});
+
+test('sharpness slider: shown for fsr1 and fsr1-pixel (RCAS runs), hidden for EASU-only', async ({ page }) => {
+  await open(page, '/');
+  for (const [mode, shown] of [['fsr1', true], ['fsr1-pixel', true], ['easu', false], ['bilinear', false]] as const) {
+    await page.selectOption('#present', mode);
+    expect(await page.locator('#sharp').isVisible(), mode).toBe(shown);
+  }
+  await page.click('#cmp-btn');
+  await page.selectOption('#cmp-a', 'fsr1-pixel');
+  await page.selectOption('#cmp-b', 'easu');
+  expect(await page.locator('#cmp-sharp-a').isVisible()).toBe(true);
+  expect(await page.locator('#cmp-sharp-b').isVisible()).toBe(false);
+});
+
+test('FSR chains do not pile up across mode and size changes; select titles are kept; the divider strip passes clicks', async ({ page }) => {
+  const errors = watch(page);
+  await open(page, '/?compare=1&cmpA=fsr1&cmpB=fsr1-pixel&hud=1');
+  const chains = (): Promise<number> => page.evaluate(() => window.__d2!.present!.chains);
+  expect(await chains()).toBeLessThanOrEqual(2);
+  for (const [a, b] of [['fsr1', 'bilinear'], ['fsr1-pixel', 'fsr1-pixel'], ['easu', 'nearest']] as const) {
+    await page.selectOption('#cmp-a', a);
+    await page.selectOption('#cmp-b', b);
+    await frames(page);
+    const used = new Set([a, b].filter((m) => m === 'fsr1' || m === 'easu' || m === 'fsr1-pixel').map((m) => (m === 'fsr1-pixel' ? 'p' : 'n'))).size;
+    expect(await chains(), `${a} | ${b}`).toBeLessThanOrEqual(Math.max(used, 1));
+  }
+  for (const w of [1000, 1280, 900]) {
+    await page.setViewportSize({ width: w, height: 700 });
+    await frames(page);
+    expect(await chains()).toBeLessThanOrEqual(1);
+  }
+  await page.selectOption('#cmp-a', 'bilinear');
+  await page.selectOption('#cmp-b', 'nearest');
+  await frames(page);
+  expect(await chains(), 'no GPU passes -> no chains').toBe(0);
+  // the selects keep their own tooltip (the summary is appended on hover only)
+  expect(await page.locator('#cmp-a').getAttribute('title')).toBe('A: left of the divider');
+  // the divider strip does not take pointer events, only the thumb does
+  const pe = await page.evaluate(() => [getComputedStyle(document.getElementById('cmp-divider')!).pointerEvents, getComputedStyle(document.getElementById('cmp-thumb')!).pointerEvents]);
+  expect(pe).toEqual(['none', 'auto']);
+  expect(errors.filter((e) => !/favicon/i.test(e))).toEqual([]);
 });

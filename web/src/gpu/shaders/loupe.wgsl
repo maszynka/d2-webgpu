@@ -27,6 +27,12 @@ fn point(l: vec2f) -> vec2f {
   return P.comp.xy + vec2f(0.5) + (l - vec2f(c0)) / P.box.w;
 }
 
+// the pixel cell containing canvas-space point p: in canvas pixels, or (source mode) in native-frame pixels
+fn cell(p: vec2f) -> vec2i {
+  if (P.misc.z < 0.5) { return vec2i(floor(p)); }
+  return vec2i(floor((p - P.rect.xy) * vec2f(P.misc.xy) / P.rect.zw));
+}
+
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let l = floor(pos.xy - P.box.xy);
@@ -35,12 +41,12 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     return vec4f(0.95, 0.8, 0.35, 1.0); // border
   }
   let p = point(l);
-  // outline of the pixel under the pointer
-  let me = vec2f(P.comp.xy);
-  let here = all(floor(p) == me);
+  // outline of the pixel under the pointer: a canvas pixel (composed mode) or a source pixel (source mode)
+  let me = cell(P.comp.xy + vec2f(0.5));
+  let here = all(cell(p) == me);
   if (here && P.box.w >= 3.0) {
-    let edge = any(floor(point(l + vec2f(1, 0))) != me) || any(floor(point(l - vec2f(1, 0))) != me)
-      || any(floor(point(l + vec2f(0, 1))) != me) || any(floor(point(l - vec2f(0, 1))) != me);
+    let edge = any(cell(point(l + vec2f(1, 0))) != me) || any(cell(point(l - vec2f(1, 0))) != me)
+      || any(cell(point(l + vec2f(0, 1))) != me) || any(cell(point(l - vec2f(0, 1))) != me);
     if (edge) { return vec4f(1.0, 0.2, 0.9, 1.0); }
   }
   let bg = vec4f(0.02, 0.02, 0.025, 1.0);

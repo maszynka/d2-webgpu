@@ -19,7 +19,7 @@ import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
 import { backingSize, fitRect, type Rect } from './fit';
 import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PARAMS_FLOATS, clampSharpness, easuConstants, packParams, pixelPrescale, planPresent, type PresentMode, type PresentPass } from './fsr';
-import { GpuTimer } from './timer';
+import { GpuTimer, type GpuTag } from './timer';
 import type { Camera } from '../world/camera';
 
 /** Atlas edge: the device's 2D texture limit, capped (r8uint: 8192^2 = 64 MiB). */
@@ -105,10 +105,14 @@ export interface PresentInfo {
   canvasW: number;
   canvasH: number;
   rect: Rect;
-  /** GPU time of the EASU + RCAS passes, ms (null: no timestamp-query feature, or no EASU this frame) */
+  /** GPU time of the timed FSR passes, ms, summed over the parts (null: no timestamp-query feature, no result yet, or no EASU) */
   gpuMs: number | null;
+  /** what was timed, per side (side 0 = single mode or A, 1 = B): label such as "prescale+EASU+RCAS" and ms */
+  gpuParts: { side: number; label: string; ms: number }[];
   /** A/B compare: both sides' modes and passes, the divider in canvas px (null: single mode) */
   compare: { a: PresentMode; b: PresentMode; passA: PresentPass; passB: PresentPass; splitPx: number; prescaleA: number; prescaleB: number } | null;
+  /** live FSR chains after this frame (only the ones in use are kept) */
+  chains: number;
   /** nearest prescale factor before EASU ("FSR1 (pixel-art)"); 1 = none */
   prescale: number;
   /** the loupe square on the canvas (device px) while it is drawn */
@@ -444,7 +448,7 @@ export class Renderer {
     } catch {
       /* no device-pixel-content-box: client size * dpr below */
     }
-    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 2) : null;
+    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 6) : null;
     this.sceneBinds = this.makeBinds(this.sceneView);
     device.addEventListener?.('uncapturederror', (e) => {
       console.error('WebGPU uncaptured error:', (e as GPUUncapturedErrorEvent).error.message);
@@ -593,6 +597,28 @@ export class Renderer {
     return ch;
   }
 
+  private destroyChain(ch: FsrChain): void {
+    ch.easuTex.destroy();
+    ch.preTex?.destroy();
+    ch.bufA.destroy();
+    ch.bufB.destroy();
+  }
+
+  /** Number of live FSR chains (tests). */
+  get chainCount(): number {
+    return this.chains.size;
+  }
+
+  /** Release the presentation resources owned by the renderer's FSR / composite stages. */
+  dispose(): void {
+    for (const ch of this.chains.values()) this.destroyChain(ch);
+    this.chains.clear();
+    this.composite?.destroy();
+    this.composite = null;
+    this.frameTex?.destroy();
+    this.frameTex = null;
+  }
+
   private ensureComposite(w: number, h: number): GPUTexture {
     if (!this.composite || this.composite.width !== w || this.composite.height !== h) {
       this.composite?.destroy();
@@ -629,13 +655,16 @@ export class Renderer {
           { ...cmp.b, side: 1, sharp: this.compare.sharpB, k: kOf(cmp.b.mode, cmp.b.pass) },
         ]
       : [{ pass: plan!.pass, scissor: r, side: 0, sharp: this.sharpness, k: kOf(this.presentMode, plan!.pass) }];
-    const loupeOn = this.loupe.on && this.loupe.visible;
+    const loupeOn =
+      this.loupe.on && this.loupe.visible && Number.isFinite(this.loupe.x) && Number.isFinite(this.loupe.y) && Number.isFinite(this.loupe.size) && this.loupe.size > 0 && cw > 0 && ch > 0;
     const canvasView = this.ctx.getCurrentTexture().createView();
     const target = loupeOn ? this.ensureComposite(cw, ch).createView() : canvasView;
     const clear = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
-    let gpuMs: number | null = null;
-    let timed = false;
     const ks = [...new Set(segs.filter((g) => g.pass === 'easu-rcas' || g.pass === 'easu').map((g) => g.k))];
+    const timed = ks.length > 0 && (this.timer?.begin() ?? false);
+    let spanN = 0;
+    const stamp = (): { timestampWrites?: GPURenderPassTimestampWrites } => (timed ? (spanN++, { timestampWrites: this.timer!.writes() }) : {});
+    const chainSpans = new Map<number, number[]>();
     for (const k of ks) {
       const ch = this.fsrChain(k, binds, srcW, srcH, r);
       const inW = srcW * k;
@@ -644,32 +673,48 @@ export class Renderer {
       const sharpOf = (side: number): number => segs.find((g) => g.side === side && g.k === k)?.sharp ?? this.sharpness;
       this.device.queue.writeBuffer(ch.bufA, 0, packParams(this.paramsData, con, sharpOf(0), r) as Float32Array<ArrayBuffer>);
       this.device.queue.writeBuffer(ch.bufB, 0, packParams(this.paramsData, con, sharpOf(1), r) as Float32Array<ArrayBuffer>);
+      const spans: number[] = [];
       if (ch.preView) {
-        const pre = enc.beginRenderPass({ colorAttachments: [{ view: ch.preView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
+        if (timed) spans.push(spanN);
+        const pre = enc.beginRenderPass({
+          colorAttachments: [{ view: ch.preView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+          ...stamp(),
+        });
         pre.setPipeline(this.blitRgbaPipeline);
         pre.setBindGroup(0, binds.nearest);
         pre.draw(3);
         pre.end();
       }
-      const first = k === ks[0];
-      if (first) timed = this.timer?.begin() ?? false;
+      if (timed) spans.push(spanN);
       const easu = enc.beginRenderPass({
         colorAttachments: [{ view: ch.easuTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
-        ...(first && timed ? { timestampWrites: this.timer!.writes() } : {}),
+        ...stamp(),
       });
       easu.setPipeline(this.easuPipeline);
       easu.setBindGroup(0, ch.easuBind);
       easu.draw(3);
       easu.end();
+      chainSpans.set(k, spans);
     }
-    let rcasTimed = false;
+    // chains of prescale factors this frame does not use are dropped (window resize / mode / compare changes would leak them)
+    for (const [k, ch] of this.chains) {
+      if (ks.includes(k)) continue;
+      this.destroyChain(ch);
+      this.chains.delete(k);
+    }
+    const tagSides: GpuTag['sides'] = [];
     segs.forEach((g, i) => {
-      const stamp = timed && g.pass === 'easu-rcas' && !rcasTimed;
-      if (stamp) rcasTimed = true;
+      const gpuPass = g.pass === 'easu-rcas' || g.pass === 'easu';
+      let rcasSpan = -1;
+      if (timed && gpuPass && g.pass === 'easu-rcas') rcasSpan = spanN;
       const pass = enc.beginRenderPass({
         colorAttachments: [{ view: target, loadOp: i === 0 ? 'clear' : 'load', storeOp: 'store', clearValue: clear }],
-        ...(stamp ? { timestampWrites: this.timer!.writes() } : {}),
+        ...(rcasSpan >= 0 ? stamp() : {}),
       });
+      if (timed && gpuPass) {
+        const label = `${g.k > 1 ? 'prescale+' : ''}EASU${g.pass === 'easu-rcas' ? '+RCAS' : ''}`;
+        tagSides.push({ side: g.side, label, spans: [...(chainSpans.get(g.k) ?? []), ...(rcasSpan >= 0 ? [rcasSpan] : [])] });
+      }
       const sc = g.scissor;
       if (sc) {
         pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
@@ -689,10 +734,12 @@ export class Renderer {
       }
       pass.end();
     });
-    if (timed) {
-      this.timer!.finish(enc);
-      gpuMs = this.timer ? this.timer.avgMs : null;
-    }
+    if (timed) this.timer!.finish(enc, { key: tagSides.map((t) => `${t.side}:${t.label}`).join('|'), sides: tagSides });
+    // the newest completed measurement, labelled by what it timed (it may lag a frame or two behind a mode change)
+    const gpuParts: PresentInfo['gpuParts'] = [];
+    const res = this.timer?.result ?? null;
+    if (res) for (const s of res.tag.sides) gpuParts.push({ side: s.side, label: s.label, ms: s.spans.reduce((a, i) => a + (res.ms[i] ?? 0), 0) });
+    const gpuMs: number | null = gpuParts.length > 0 ? gpuParts.reduce((a, p) => a + p.ms, 0) : null;
     let loupeInfo: PresentInfo['loupe'] = null;
     if (loupeOn) {
       const L = this.loupe;
@@ -732,6 +779,8 @@ export class Renderer {
       canvasH: ch,
       rect: r,
       gpuMs,
+      gpuParts,
+      chains: this.chains.size,
       compare: cmp ? { a: cmp.a.mode, b: cmp.b.mode, passA: cmp.a.pass, passB: cmp.b.pass, splitPx: cmp.splitPx, prescaleA: segs[0]!.k, prescaleB: segs[1]!.k } : null,
       prescale: segs[0]!.k,
       loupe: loupeInfo,
