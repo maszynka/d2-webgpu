@@ -120,6 +120,19 @@ async function main(): Promise<void> {
   bar.onPointerLeft = () => {
     if (!panel.popoverOpen) releaseBarFocus();
   };
+  panel.onDismiss = () => {
+    if (full) canvas.focus({ preventScroll: true });
+  };
+  // a pointer press outside the bar dismisses its popovers, so they never pin the bar over the game
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!panel.popoverOpen || $('bar').contains(e.target as Node)) return;
+      panel.closePopovers();
+      panel.onDismiss();
+    },
+    true,
+  );
   // keep every bar interaction from stealing the game's keyboard focus; keyboard-activated buttons (detail 0) keep it
   $('bar').addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
@@ -252,8 +265,14 @@ async function main(): Promise<void> {
       let hit = true;
       if (e.code === 'F11' || (e.altKey && e.code === 'Enter')) void fullscreen.toggle();
       else if (e.code === 'F10') {
-        bar.reveal();
-        $<HTMLSelectElement>('mode').focus();
+        // toggles in play: hiding hands focus back to the game (bar.onHidden)
+        if (bar.state === 'overlay-visible') {
+          panel.closePopovers();
+          bar.hideNow();
+        } else {
+          bar.reveal();
+          $<HTMLSelectElement>('mode').focus();
+        }
       } else if (e.code === 'F9') setDebug(debug.hidden !== false);
       else hit = false;
       if (!hit) return;

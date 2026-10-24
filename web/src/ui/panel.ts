@@ -146,7 +146,9 @@ export class Panel {
         if (e.key === 'Escape') {
           e.stopPropagation();
           this.closePopovers();
-          (pop === this.tools ? this.toolsBtn : this.brand).focus();
+          // in play the game gets the keys back; otherwise focus returns to the trigger
+          if (this.isPlaying) this.onDismiss();
+          else (pop === this.tools ? this.toolsBtn : this.brand).focus();
         }
       });
     }
@@ -202,6 +204,8 @@ export class Panel {
 
   /** hook: the bar re-evaluates its auto-hide when a popover opens or closes */
   onPopover: () => void = () => undefined;
+  /** A popover was dismissed during play (Escape / pointer outside): give the keyboard back to the game. */
+  onDismiss: () => void = () => undefined;
 
   // --- state ----------------------------------------------------------------
 
