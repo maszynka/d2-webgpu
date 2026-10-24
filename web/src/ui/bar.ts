@@ -14,6 +14,8 @@ export class Bar {
   private hovering = false;
   private held = false;
   pinned = false;
+  /** Called when the bar hides while focus is inside it (inert would drop focus to body): give it back to the game. */
+  onHidden: () => void = () => undefined;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private edgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -116,7 +118,9 @@ export class Bar {
   private apply(): void {
     this.bar.classList.toggle('hidden', this.overlay && this.hidden);
     const off = this.overlay && this.hidden;
+    const hadFocus = off && this.bar.contains(document.activeElement);
     this.bar.toggleAttribute('inert', off);
+    if (hadFocus) this.onHidden();
     if (off) this.bar.setAttribute('aria-hidden', 'true');
     else this.bar.removeAttribute('aria-hidden');
     this.onChange();

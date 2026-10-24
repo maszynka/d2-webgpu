@@ -51,7 +51,7 @@ fn fs(@builtin(position) frag: vec4f) -> @location(0) vec4f {
   let mn4 = min(min(b, d), min(f, h));
   let mx4 = max(max(b, d), max(f, h));
   let hitMin = min(mn4, e) / max(4.0 * mx4, vec3f(1.0e-6));
-  let hitMax = (vec3f(1.0) - max(mx4, e)) / (4.0 * mn4 - 4.0);
+  let hitMax = (vec3f(1.0) - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3f(-1.0e-6));
   let lobeRGB = max(-hitMin, hitMax);
   let lobe = max(-RCAS_LIMIT, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * P.rcas.x;
   let rcpL = 1.0 / (4.0 * lobe + 1.0);

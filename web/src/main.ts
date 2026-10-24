@@ -109,6 +109,9 @@ async function main(): Promise<void> {
   );
   const bar = new Bar($('bar'), document.body, () => panel.popoverOpen);
   panel.onPopover = () => bar.armHide();
+  bar.onHidden = () => {
+    if (full) canvas.focus({ preventScroll: true });
+  };
   // keep every bar interaction from stealing the game's keyboard focus
   $('bar').addEventListener('click', (e) => {
     const t = e.target as HTMLElement;

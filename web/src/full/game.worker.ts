@@ -50,6 +50,8 @@ let state: D2WebState | null = null;
 let mod: D2Module | null = null;
 let syncing = false;
 let syncAgain = false;
+// bumped when finalFlush abandons a stuck write, so that write's late callback is ignored
+let syncGen = 0;
 /** set when restoring IndexedDB failed: writing the (empty) dir back would erase the saves, so never sync out */
 let readOnly = false;
 let exited = false;
@@ -73,8 +75,10 @@ function flushUserDir(): Promise<void> {
     return Promise.resolve();
   }
   syncing = true;
+  const gen = syncGen;
   return new Promise((resolve) => {
     m.FS.syncfs(false, (err) => {
+      if (gen !== syncGen) return;
       syncing = false;
       if (err) post({ t: 'log', line: `IDBFS save failed: ${err.message}` });
       else post({ t: 'synced', saves: ++syncs });
@@ -186,6 +190,7 @@ function describe(m: D2Module, e: unknown): string {
 async function finalFlush(): Promise<void> {
   for (let i = 0; i < 60 && (syncing || syncAgain); i++) await new Promise((r) => setTimeout(r, 25));
   if (syncing) {
+    syncGen++;
     syncing = false;
     syncAgain = false;
   }
