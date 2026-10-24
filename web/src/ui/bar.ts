@@ -16,6 +16,8 @@ export class Bar {
   pinned = false;
   /** Called when the bar hides while focus is inside it (inert would drop focus to body): give it back to the game. */
   onHidden: () => void = () => undefined;
+  /** The pointer left the bar with focus still in it (a select/slider just used): hand focus back to the game. */
+  onPointerLeft: () => void = () => undefined;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private edgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -32,9 +34,14 @@ export class Bar {
     });
     bar.addEventListener('pointerleave', () => {
       this.hovering = false;
+      if (this.overlay && this.focusInside()) this.onPointerLeft();
       this.armHide();
     });
     bar.addEventListener('focusin', () => this.reveal());
+    // keyboard focus inside keeps the bar up; leaving it re-arms the auto-hide
+    bar.addEventListener('focusout', (e) => {
+      if (!this.bar.contains(e.relatedTarget as Node | null)) this.armHide();
+    });
     window.addEventListener('pointermove', (e) => {
       if (!this.overlay || !this.hidden) return;
       if (e.clientY > HOT_EDGE_PX) {
@@ -103,11 +110,15 @@ export class Bar {
   /** Re-evaluate the auto-hide (a popover closed, the pointer left, ...). */
   armHide(): void {
     this.clearHide();
-    if (!this.overlay || this.hidden || this.pinned || this.held || this.hovering || this.popoverOpen()) return;
+    if (!this.overlay || this.hidden || this.pinned || this.held || this.hovering || this.popoverOpen() || this.focusInside()) return;
     this.hideTimer = setTimeout(() => {
       this.hideTimer = null;
-      if (this.overlay && !this.pinned && !this.held && !this.hovering && !this.popoverOpen()) this.hideNow();
+      if (this.overlay && !this.pinned && !this.held && !this.hovering && !this.popoverOpen() && !this.focusInside()) this.hideNow();
     }, HIDE_DELAY_MS);
+  }
+
+  private focusInside(): boolean {
+    return this.bar.contains(document.activeElement);
   }
 
   private clearHide(): void {

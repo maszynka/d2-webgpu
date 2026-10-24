@@ -112,10 +112,18 @@ async function main(): Promise<void> {
   bar.onHidden = () => {
     if (full) canvas.focus({ preventScroll: true });
   };
-  // keep every bar interaction from stealing the game's keyboard focus
+  // focus left in the bar would keep it from auto-hiding (bar.ts): hand it to the game, or just drop it
+  const releaseBarFocus = (): void => {
+    if (full) canvas.focus({ preventScroll: true });
+    else if (document.activeElement instanceof HTMLElement && $('bar').contains(document.activeElement)) document.activeElement.blur();
+  };
+  bar.onPointerLeft = () => {
+    if (!panel.popoverOpen) releaseBarFocus();
+  };
+  // keep every bar interaction from stealing the game's keyboard focus; keyboard-activated buttons (detail 0) keep it
   $('bar').addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
-    if (full && !t.closest('input[type=text], input[type=number], select') && !panel.popoverOpen) requestAnimationFrame(() => canvas.focus({ preventScroll: true }));
+    if (!t.closest('input, select') && !panel.popoverOpen && (full || e.detail > 0)) requestAnimationFrame(releaseBarFocus);
   });
   if (params.get('bar') === 'pinned') bar.setPinned(true);
 
