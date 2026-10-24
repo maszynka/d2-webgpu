@@ -15,7 +15,7 @@ import downsampleWgsl from './shaders/downsample.wgsl?raw';
 import { planCompare } from './compare';
 import { DEFAULT_DENSITY, densitySize, effectiveDpr, type Density } from './density';
 import { StageResample, type ResampleDeps } from './resample';
-import { createStage, markStageFailed } from './upscale/registry';
+import { createStage, markStageFailed, setStageLoading } from './upscale/registry';
 import type { UpscaleStage } from './upscale/stage';
 import { DEFAULT_UI_SCALER, maskKey, planMask, rasterizeMask, sharpPrescale, type MaskKind, type UiScaler } from './uimask';
 import type { UiInfo } from '../full/uitrailer';
@@ -729,6 +729,7 @@ export class Renderer {
 
   /** Release the presentation resources owned by the renderer's FSR / composite stages. */
   dispose(): void {
+    this.disposed = true;
     for (const ch of this.chains.values()) this.destroyChain(ch);
     this.chains.clear();
     if (this.composite) this.killTex(this.composite);
@@ -758,6 +759,58 @@ export class Renderer {
       });
     }
     return this.composite;
+  }
+
+  /** De-dither before the smooth stages (read by their factories); toggling rebuilds the live smooth stages */
+  dedither = true;
+  setDedither(on: boolean): void {
+    if (on === this.dedither) return;
+    this.dedither = on;
+    for (const [mode, st] of this.stages) {
+      if (!mode.startsWith('smooth')) continue;
+      st.destroy();
+      this.stages.delete(mode);
+    }
+    this.presentDirty = true;
+  }
+  private readonly pendingStages = new Set<string>();
+  private disposed = false;
+
+  /** The live stage for a concrete mode, or false while an async factory is still building it (presentDirty on resolve). */
+  private ensureStage(mode: string): boolean {
+    if (this.stages.has(mode)) return true;
+    if (this.pendingStages.has(mode)) return false;
+    let made: UpscaleStage | Promise<UpscaleStage>;
+    try {
+      made = createStage(mode, this.device);
+    } catch (e) {
+      console.error(`upscale stage ${mode} failed:`, e);
+      markStageFailed(mode);
+      return false;
+    }
+    if (!(made instanceof Promise)) {
+      this.stages.set(mode, made);
+      return true;
+    }
+    this.pendingStages.add(mode);
+    setStageLoading(mode, true);
+    made.then(
+      (st) => {
+        this.pendingStages.delete(mode);
+        if (this.disposed || this.stages.has(mode)) st.destroy();
+        else this.stages.set(mode, st);
+        this.presentDirty = true;
+        setStageLoading(mode, false);
+      },
+      (e: unknown) => {
+        console.error(`upscale stage ${mode} failed:`, e);
+        this.pendingStages.delete(mode);
+        this.presentDirty = true;
+        markStageFailed(mode);
+        setStageLoading(mode, false);
+      },
+    );
+    return false;
   }
 
   /** The resample deps stage outputs need (pipelines are the renderer's own). */
@@ -814,6 +867,12 @@ export class Renderer {
           { ...cmp.b, side: 1, sharp: this.compare.sharpB, k: kOf(cmp.b.mode, cmp.b.pass) },
         ]
       : [{ pass: plan!.pass, scissor: r, side: 0, sharp: this.sharpness, k: kOf(this.presentMode, plan!.pass), stage: plan!.stage }];
+    // a stage that is not built yet (async factory in flight) presents with FSR1 until it resolves
+    for (const g of segs) {
+      if (g.pass !== 'stage' || !g.stage || this.ensureStage(g.stage)) continue;
+      g.pass = r.w > srcW || r.h > srcH ? 'easu-rcas' : 'bilinear';
+      g.stage = undefined;
+    }
     const loupeOn =
       this.loupe.on && this.loupe.visible && Number.isFinite(this.loupe.x) && Number.isFinite(this.loupe.y) && Number.isFinite(this.loupe.size) && this.loupe.size > 0 && cw > 0 && ch > 0;
     const canvasView = this.ctx.getCurrentTexture().createView();
@@ -871,11 +930,8 @@ export class Renderer {
     for (const mode of stageModes) {
       const side = segs.find((g) => g.stage === mode)!.side;
       try {
-        let st = this.stages.get(mode);
-        if (!st) {
-          st = createStage(mode, this.device);
-          this.stages.set(mode, st);
-        }
+        const st = this.stages.get(mode);
+        if (!st) throw new Error(`stage ${mode} not built`); // ensureStage built it above
         const out = st.encode(enc, binds.view, srcW, srcH, (label) => {
           if (!timed) return undefined;
           tagSides.push({ side, label: `${mode}: ${label}`, spans: [spanN] });

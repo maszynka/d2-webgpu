@@ -11,10 +11,12 @@ export const STAGE_MODES: readonly StageMode[] = ['smooth', 'smooth-scalefx', 's
 /** "smooth" uses ScaleFX (3x) from this output scale up, Super-xBR (2x) below it */
 export const SMOOTH_SCALEFX_MIN_SCALE = 2.5;
 
-export type StageFactory = (device: GPUDevice) => UpscaleStage;
+/** A factory may be async (FSRCNNX fetches its weights and builds pipelines): the renderer presents FSR1 until it resolves. */
+export type StageFactory = (device: GPUDevice) => UpscaleStage | Promise<UpscaleStage>;
 
 const factories = new Map<string, StageFactory>();
 const failed = new Set<string>();
+const loading = new Set<string>();
 const listeners = new Set<() => void>();
 
 export function isStageMode(mode: string): mode is StageMode {
@@ -37,6 +39,20 @@ export function unregisterStage(mode: string): void {
 export function markStageFailed(mode: string): void {
   failed.add(mode);
   for (const l of listeners) l();
+}
+
+/** The renderer reports a mode whose async factory is in flight (the UI shows "loading\u2026"). */
+export function setStageLoading(mode: string, on: boolean): void {
+  if (on === loading.has(mode)) return;
+  if (on) loading.add(mode);
+  else loading.delete(mode);
+  for (const l of listeners) l();
+}
+
+/** Whether a presentation mode is still loading (async factory pending); 'smooth' when its resolved candidates are. */
+export function stageLoading(mode: string): boolean {
+  if (mode === 'smooth') return ['smooth-scalefx', 'smooth-sxbr'].some((m) => loading.has(m));
+  return loading.has(mode);
 }
 
 function concreteAvailable(mode: string): boolean {
@@ -62,7 +78,7 @@ export function resolveStageMode(mode: string, scale: number): string | null {
   return isStageMode(mode) && concreteAvailable(mode) ? mode : null;
 }
 
-export function createStage(mode: string, device: GPUDevice): UpscaleStage {
+export function createStage(mode: string, device: GPUDevice): UpscaleStage | Promise<UpscaleStage> {
   const f = factories.get(mode);
   if (!f) throw new Error(`no upscale stage registered for ${mode}`);
   return f(device);
@@ -78,5 +94,6 @@ export function onStagesChanged(fn: () => void): () => void {
 export function resetStagesForTests(): void {
   factories.clear();
   failed.clear();
+  loading.clear();
   listeners.clear();
 }

@@ -17,6 +17,9 @@ import { FullscreenController } from './ui/fullscreen';
 import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui/panel';
 import type { UiInfo as UiFrameInfo } from './full/uitrailer';
 import { registerFakeStage } from './gpu/fakestage';
+import { register as registerFsrcnnx } from './gpu/upscale/fsrcnnx';
+import { registerStage, STAGE_MODES, unregisterStage } from './gpu/upscale/registry';
+import { register as registerSmooth } from './gpu/upscale/smooth';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
 import { bindDivider } from './ui/divider';
 import { bindLoupe } from './ui/loupe';
@@ -32,7 +35,7 @@ export interface UiInfo {
   bar: BarState;
   fullscreen: boolean;
   native: { w: number; h: number };
-  present: { mode: string; sharpness: number; ui: string; density: string };
+  present: { mode: string; sharpness: number; ui: string; density: string; dedither: boolean };
   compare: { on: boolean; a: string; b: string; split: number };
   loupe: { on: boolean; zoom: number; source: boolean; size: number };
   hud: boolean;
@@ -60,6 +63,8 @@ declare global {
       setUi?: (info: UiFrameInfo | null) => void;
       getUi?: () => UiFrameInfo | null;
       registerFakeStage?: (mode?: string) => void;
+      /** tests: drop every registered stage (the modes become unavailable) */
+      unregisterStages?: () => void;
     };
   }
 }
@@ -186,6 +191,9 @@ async function main(): Promise<void> {
     return;
   }
   console.info('WebGPU adapter:', JSON.stringify(renderer.adapterInfo));
+  // world upscalers: smooth (dedither + ScaleFX / Super-xBR) builds synchronously, FSRCNNX fetches its weights
+  registerSmooth(registerStage, () => ({ dedither: renderer.dedither }));
+  registerFsrcnnx(registerStage);
   const presentCtl = bindPresentControls(renderer, params);
   const loupeCtl = bindLoupe(renderer, canvas, params);
   const hud = bindHud(params, readStored, writeStored, presentCtl.compare.on);
@@ -252,6 +260,9 @@ async function main(): Promise<void> {
       get density() {
         return presentCtl.density;
       },
+      get dedither() {
+        return presentCtl.dedither;
+      },
     },
     compare: presentCtl.compare,
     loupe: loupeCtl,
@@ -267,6 +278,7 @@ async function main(): Promise<void> {
   state.setUi = (info) => renderer.setUi(info);
   state.getUi = () => renderer.currentUi;
   state.registerFakeStage = (mode) => registerFakeStage(mode);
+  state.unregisterStages = () => STAGE_MODES.forEach((m) => unregisterStage(m));
 
   // --- fullscreen (the whole app, so the bar and the cards come along) and the bar's overlay mode ----------
   const fsBtn = $<HTMLButtonElement>('fs-btn');

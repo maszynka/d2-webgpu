@@ -203,6 +203,7 @@ Controls (all in the tools popover `#game-tools`, row `#display-tools`; the worl
 |---|---|---|
 | Menus/HUD | `#ui-scaler` | `Sharp bilinear` (default), `Same as world`, `Nearest`; `?ui=sharp\|world\|nearest`; `localStorage d2.ui` |
 | Render density | `#density` | `Retina (auto)` (default), `1x`; `?density=auto\|1`; `localStorage d2.density` |
+| De-dither | `#dedither` (checkbox, shown only when the world mode is a smooth one, either compare side included) | on by default; `?dedither=0`; `localStorage d2.dedither`; global (not per compare side). Toggling rebuilds the live smooth stage. |
 
 * **UI mask.** The game sends, in the same pooled frame buffer as the pixels, the screen id (0 menu, 1 in game, 2 video) and up
   to 64 UI rects in native pixels (`web/src/full/uitrailer.ts`; recorded by patch 0014, see `full-game-status.md`).
@@ -215,8 +216,11 @@ Controls (all in the tools popover `#game-tools`, row `#display-tools`; the worl
   taps (`sharpTaps` in `uimask.ts` is the tested twin of the WGSL): texel interiors stay flat, only a `(scale/k - 1)`-wide band
   at texel edges is blended. Exactly nearest at integer scales, plain bilinear below 2x.
 * **Stage modes** (`smooth`, `smooth-scalefx`, `smooth-sxbr`, `fsrcnnx`) are in `PRESENT_MODES` and in all three selects. They run a
-  registered `UpscaleStage` (`gpu/upscale/registry.ts`: `registerStage(mode, factory)`); without a registered stage the option is
-  disabled and labelled "(not available)" (the list refreshes when a stage registers) and `planPresent` falls back to FSR1.
+  registered `UpscaleStage` (`gpu/upscale/registry.ts`: `registerStage(mode, factory)`); `main.ts` registers the smooth pair
+  (`gpu/upscale/smooth.ts` `register`, its options callback reads the De-dither setting) and `fsrcnnx` (`fsrcnnx.ts` `register`) at
+  startup. A factory may return a Promise (FSRCNNX fetches its weights and builds pipelines): while it is pending the option reads
+  "(loading...)" and the renderer presents with FSR1 (`Renderer.ensureStage`); on rejection `markStageFailed` makes it
+  "(not available)". Without a registered stage the option is disabled, labelled "(not available)", and `planPresent` falls back to FSR1.
   `smooth` resolves to ScaleFX from scale 2.5, else Super-xBR. The renderer encodes the stage on the native frame, then: output
   smaller than the target -> EASU (+ RCAS with the sharpness slider, shown for stage modes too); larger -> explicit area/box
   downsample (`shaders/downsample.wgsl`); equal -> copy (`gpu/resample.ts`). A stage that throws is marked failed and the mode falls
@@ -226,7 +230,7 @@ Controls (all in the tools popover `#game-tools`, row `#display-tools`; the worl
   Pointer mapping uses `canvas.width / rect.width`, so it is unaffected; the loupe size and the demo pan use the effective dpr
   (`Renderer.effectiveDpr`). The HUD shows `dpr 2 (render 1.00, density 1)` when they differ, plus `menus/HUD sharp (7 rects)` and the screen.
 * Test hooks on `window.__d2`: `setUi(info)` (synthetic UI rects for the demo), `getUi()`, `textures()` (created / destroyed /
-  live textures incl. stages and resamplers), `registerFakeStage(mode)` (a trivial 2x nearest stage, `gpu/fakestage.ts`).
+  live textures incl. stages and resamplers), `registerFakeStage(mode)` (a trivial 2x nearest stage, `gpu/fakestage.ts`), `unregisterStages()`. The standalone GPU test pages (`web/test-pages/`) are served by a vite dev server started inside their specs, not by the app build, so they never reach `web/dist`.
 
 ## 3. Game surface
 

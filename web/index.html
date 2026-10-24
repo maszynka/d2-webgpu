@@ -76,6 +76,7 @@
             <label>Render density
               <select id="density" title="Retina (auto): render at device pixels. 1x: render at CSS pixels and let the browser scale the canvas (about a quarter of the GPU work at DPR 2)."></select>
             </label>
+            <label hidden><input id="dedither" type="checkbox" checked title="Remove D2's checkerboard / stripe dithering before the smooth upscalers (?dedither=0)" /> De-dither</label>
           </div>
           <div class="row">
             <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>

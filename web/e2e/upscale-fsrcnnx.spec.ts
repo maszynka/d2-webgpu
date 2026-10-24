@@ -1,20 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // FSRCNNX stage: GPU vs CPU reference on a 64x64 synthetic patch, GPU timing on 1066x600, and screenshots.
+// The page is served by a vite dev server started here, so it is not a build input and never ships in web/dist.
 // SwiftShader (the headless default here) is a CPU rasteriser: its timings are NOT representative of a real GPU.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { PNG } from 'pngjs';
+import { createServer, type ViteDevServer } from 'vite';
 import { bilinear2x, fsrcnnxReference } from '../src/gpu/upscale/fsrcnnx-ref';
 import { parseFsrcnnxWeights } from '../src/gpu/upscale/fsrcnnx-weights';
 
 const shotDir = process.env['D2_SHOT_DIR'] ?? 'test-results';
-const PAGE = '/test-pages/fsrcnnx.html';
+const PAGE = 'test-pages/fsrcnnx.html';
+let server: ViteDevServer;
+let base = '';
+test.beforeAll(async () => {
+  server = await createServer({ root: process.cwd(), configFile: false, logLevel: 'error', server: { port: 5198, strictPort: false, host: '127.0.0.1' }, optimizeDeps: { noDiscovery: true } });
+  await server.listen();
+  base = server.resolvedUrls?.local[0] ?? 'http://127.0.0.1:5198/';
+});
+test.afterAll(async () => {
+  await server.close();
+});
 
 const bytes = readFileSync(new URL('../public/fsrcnnx-8-0-4-1.bin', import.meta.url));
 const weights = parseFsrcnnxWeights(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
 
 async function ready(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(PAGE);
+  await page.goto(`${base}${PAGE}`);
   test.skip(!(await page.evaluate(() => 'gpu' in navigator && !!navigator.gpu)), 'WebGPU not available in this headless Chromium');
   await page.waitForFunction(() => !!(window as unknown as { __fsrcnnx?: unknown }).__fsrcnnx, undefined, { timeout: 30_000 });
 }

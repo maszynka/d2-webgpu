@@ -71,6 +71,7 @@ test.describe('world stage seam (fake 2x stage)', () => {
   test('stage modes are listed but disabled until a stage is registered, then run without validation errors', async ({ page }) => {
     const errors = watch(page);
     await open(page, '/');
+    await page.evaluate(() => window.__d2!.unregisterStages!()); // the app registers the real stages at startup
     for (const id of ['smooth', 'smooth-scalefx', 'smooth-sxbr', 'fsrcnnx']) {
       const o = page.locator(`#present option[value="${id}"]`);
       await expect(o).toHaveCount(1);

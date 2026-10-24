@@ -54,8 +54,11 @@ export function createSmoothSuperXbr(device: GPUDevice, opts: SmoothOptions = {}
 
 export type StageRegistry = (mode: string, factory: (device: GPUDevice) => UpscaleStage) => void;
 
-/** Registers the two smooth modes (dedither on); the integrator can call the factories directly for the dedither-off variants. */
-export function register(registry: StageRegistry): void {
-  registry('smooth-scalefx', (device) => createSmoothScaleFx(device, { dedither: true }));
-  registry('smooth-sxbr', (device) => createSmoothSuperXbr(device, { dedither: true }));
+/**
+ * Registers the two smooth modes. `options` is read each time a stage is built (the app's global De-dither toggle);
+ * the default is dedither on.
+ */
+export function register(registry: StageRegistry, options: () => SmoothOptions = () => ({ dedither: true })): void {
+  registry('smooth-scalefx', (device) => createSmoothScaleFx(device, options()));
+  registry('smooth-sxbr', (device) => createSmoothSuperXbr(device, options()));
 }
