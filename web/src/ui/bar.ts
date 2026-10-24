@@ -32,9 +32,11 @@ export class Bar {
       this.hovering = true;
       this.clearHide();
     });
-    bar.addEventListener('pointerleave', () => {
+    bar.addEventListener('pointerleave', (e) => {
       this.hovering = false;
-      if (this.overlay && this.focusInside()) this.onPointerLeft();
+      // a native <select> popup opening also fires pointerleave (relatedTarget null): leave its focus alone
+      const selectOpen = e.relatedTarget === null && document.activeElement instanceof HTMLSelectElement;
+      if (this.overlay && this.focusInside() && !selectOpen) this.onPointerLeft();
       this.armHide();
     });
     bar.addEventListener('focusin', () => this.reveal());
