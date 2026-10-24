@@ -31,6 +31,8 @@ Najpierw zrobiony krok pętli (lambda + `emscripten_set_main_loop`, setTimeout-p
 10. 0010 `main.cpp` hinty `dummy`/`software` bezwarunkowo
 11. 0011 `character_store.hpp` po każdym zapisie postaci `d2web::saved()` → strona robi `FS.syncfs(false)` od razu
 12. 0012 `frontend.cpp` wpis „TCP/IP GAME” wyłączony w buildzie web (nic nie wychodzi z przeglądarki)
+13. 0013 szerokość widoku z strony (patrz „Rozdzielczość i prezentacja”)
+14. 0014 `ui-rects`: prostokąty UI klatki + id ekranu dla skalera menu/HUD (niżej)
 Każda łatka ma w nagłówku linię SPDX i opis; `apply-patches.sh --check` w CI.
 
 ## Wątki — wszystkie miejsca w spatchowanym drzewie (grep `thread|async|jthread|condition_variable|promise|mutex|wait`)
@@ -118,3 +120,37 @@ Wybór i ostrość zapamiętuje localStorage; `?present=`/`?sharp=` działają t
 **Układ strony** (`docs/design/ui.md`): pasek 32 px, powierzchnia zajmuje resztę strony; w grze (lub w pełnym ekranie) pasek jest nakładką chowaną po 1,5 s (gorąca krawędź 3 px / `Ctrl+Shift+B` / pin), overlay nigdy nie zmienia rozmiaru canvasa. Wymagane archiwa do Play: `d2data`, `d2exp`, `d2char`, `patch_d2` (upstream otwiera d2data bezwarunkowo, pozostałe przez `find()`); `d2sfx`/`d2speech`/`d2music`/`d2video` (i warianty x) opcjonalne — zweryfikowane: gra startuje i działa bez nich. API rozmiaru: `FullGame.updateView()` + wiadomość `{t:'view', width}` (wysokość stała = 600).
 
 **Poprawki z review w tym przebiegu:** `stop()` workera wysyła `flushed` od razu, gdy gra już wyszła (a `FullGame.stop` pomija czekanie po `exit`); `d2web_audio.cpp::do_play` respektuje `start_frames` dla źródeł initial/stopped (AL_SAMPLE_OFFSET), brak fałszywych `free(-1:0)` (flaga `on_page`), `alBufferData` z `freq <= 0` → AL_INVALID_VALUE; `audio.ts` obcina ujemne offsety i izoluje błąd pojedynczej komendy (`try/catch` na op, licznik `errors`); timer `syncfs` jest czyszczony przy wyjściu/stopie, `flushUserDir` ignoruje wywołania po zamknięciu; `run_now_or_default` łapie `catch(...)`; bufor linii w `devctl_web.cpp` lokalny; zduplikowane nagłówki `diff` w łatce 0003 usunięte; podwójne kliknięcie Play ignorowane (`playBusy`).
+
+
+## Prostokąty UI i skaler menu/HUD (łatka 0014, 2026-10-24, plan `docs/plans/upscalers.md` etap A)
+
+**Cel:** strona rysuje menu / HUD / panele ostrym bilinear (nearest prescale + bilinear), a świat wybranym skalerem (FSR1, smooth ...). Do tego potrzebuje na każdą klatkę: id ekranu i listy prostokątów UI.
+* **Id ekranu** (`d2web::ui_screen`, oba miejsca `present` w `main.cpp`): 0 = menu (Title, CharSelect, CharCreate, Credits, Cinematics, OtherMultiplayer, TcpIp, Endgame i boot-title), 1 = `Screen::InGame`, 2 = `Screen::Video` (FMV: skaler świata, bez maski). Menu = cała klatka UI.
+* **Prostokąty (w grze), zapis w czasie rysowania.** `render_ingame` po złożeniu świata (po kopii środkowych 800x600 w widescreenie) otwiera „okno UI” (`d2web::ui_begin`), a `Town::draw` je zamyka (`ui_end`). W oknie zapisują prostokąt: **`blit_sprite`** (cały HUD: panel sterowania, kule, pas z beltem i popupem pasa, panele ekwipunek/postać/umiejętności/schowek/kostka/sklep/waypointy/dziennik questów, przyciski poziomu, minipanel, menu gry, party, hireling, pomoc, klawisze, ekran śmierci - wszystko idzie przez ten prymityw), **`Font::draw_tinted`** (każdy napis: etykieta liczona z szerokości tekstu x `line_height`), tło tooltipów (`draw_hover_text`), ciemne pola czatu (`draw_chat::darken`). Poza oknem, w buforze świata: ramki etykiet nad światem (nazwa pod kursorem, etykiety Alt "Show Items") przez `ui_add_abs` (współrzędne klatki). Kursor (rysowany w `main.cpp` po `draw`) i świat nie są UI.
+* **Przesunięcie widescreenu:** UI rysuje się w buforze 800x600 wklejanym na środek szerokiej klatki; `Town::draw` ustawia `ui_offset(off)`, więc prostokąty trafiają do współrzędnych klatki.
+* **Scalanie (`d2web.cpp`):** przyrostowo, prostokąty stykające się/nakładające się łączą się, gdy suma nie marnuje więcej niż ~25% pola (panele z elementami wewnątrz zlewają się w jeden prostokąt, a L-ki nie połykają świata); po zakończeniu przycięcie do klatki i redukcja do <= 64 przez łączenie par o najmniejszym przyroście. Koszt: jeden test flagi na `blit_sprite` / napis poza oknem; w oknie kilkaset prostych porównań na klatkę.
+* **Statyczne zapasowe prostokąty:** nie były potrzebne (wszystkie rysunki UI przechodzą przez hookowane prymitywy). Niezahookowane: rysunki UI robione bezpośrednio na pikselach (wypełnienie kul życia/many, pasek doświadczenia, linie automapy) - leżą w obrębie prostokątów, które zapisują panele pod nimi; sama automapa (linie na świecie) jest celowo światem.
+* **Transport:** `d2web::present` składa trailer (`u32 "2DI1"`, `u8 screen`, `u8 flags`, `u16 count`, `count x u16 x,y,w,h`; <= 520 B) i przekazuje wskaźnik do `FramePool.submit(heap, ptr, w, h, uiPtr, uiLen)`, który kopiuje piksele i trailer do **tego samego** bufora (`w*h*4 + 520`); strona dekoduje go w `FrameMailbox.flush` (`web/src/full/uitrailer.ts`, test kodeka), więc maska nigdy nie wyprzedza ani nie opóźnia obrazu.
+* **Renderer:** `Renderer.presentRgba(w, h, rgba, ui)` -> maska `r8unorm` (rozmiar klatki, odświeżana tylko przy zmianie) -> jeden przebieg UI po wyniku świata. Ustawienie `Menus/HUD` (`?ui=`), gęstość renderowania (`?density=`), tryby etapowe i licznik tekstur: `docs/design/ui.md` §2.9.
+
+## Skalery świata podpięte do aplikacji (integracja etapów B i C, 2026-10-24, plan `docs/plans/upscalers.md`)
+
+* `main.ts` rejestruje przy starcie `smooth-scalefx` / `smooth-sxbr` (dedither + ScaleFX 3x / Super-xBR 2x) i `fsrcnnx` (async: wagi z `fsrcnnx-8-0-4-1.bin`). Fabryka może zwracać Promise: do czasu jej rozwiązania opcja pokazuje „(loading...)”, a renderer prezentuje FSR1; błąd = `markStageFailed` („not available”, FSR1).
+* Dedither domyślnie włączony; checkbox „De-dither” (`?dedither=0`, `localStorage d2.dedither`) jest globalny.
+* Strony testowe GPU (`web/test-pages/`) nie są wejściami buildu: ich specyfikacje startują własny serwer vite (porty 5198/5199), więc `web/dist` ich nie zawiera (sprawdzone `ls web/dist` po buildzie jak w `scripts/deploy.sh`; wagi `fsrcnnx-8-0-4-1.bin` są w dist celowo).
+* Obóz na prawdziwych danych, DPR 2 (SwiftShader, CPU, czasy nie są reprezentatywne dla GPU): fsr1 EASU+RCAS 95 ms; smooth-scalefx 1,36 s (p3 580 ms); smooth-sxbr 230 ms; fsrcnnx 188 ms łącznie. Zrzuty `up-int-*.png`. Dedither zmiękcza drobne, 1-pikselowe źdźbła trawy i cienkie linie (siatka namiotu) - łagodnie, bez utraty czytelnych kształtów; wyłączalny przełącznikiem. fsrcnnx daje wyraźnie ciemniejszy i mniej nasycony obraz trawy niż pozostałe tryby (do oceny wzrokowej na prawdziwej karcie).
+
+### Pomiar na prawdziwym GPU (Apple Metal, Chrome, DPR 2, 3200x1800, obóz, klatka 1066x600, 2026-10-24)
+
+Mediana `present.gpuMs` z 20 próbek (timestamp-query; na Metal czasy przebiegów mogą się nakładać, więc to górna granica), FPS z `perf()`:
+
+| tryb | GPU ms | FPS |
+|---|---|---|
+| bilinear | 0,9 | 33,6 |
+| fsr1 (EASU+RCAS 6,9 + UI 4,2) | 11,4 | 34,8 |
+| smooth (→ scalefx przy 3x) | 13,5 | 35,6 |
+| smooth-scalefx | 13,7 | 35,0 |
+| smooth-sxbr | 30,2 | 34,8 |
+| fsrcnnx | 46,4 | 32,9 |
+
+FPS nie zależy od trybu (wąskim gardłem jest gra w WASM), więc nawet FSRCNNX mieści się w potoku. Przebieg UI (sharp bilinear, maska r8) kosztuje ~4 ms przy 3200x1800. Wszystkie tryby renderują poprawnie, bez błędów walidacji. Zrzuty: scratchpad sesji, `bench2/ingame-*.png`.

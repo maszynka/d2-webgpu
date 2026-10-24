@@ -3,11 +3,16 @@
 // (FsrEasuCon / FsrRcasCon), Copyright (c) 2021 Advanced Micro Devices, Inc., MIT License
 // (LICENSES/FidelityFX-FSR1-MIT.txt). The shaders are web/src/gpu/shaders/{easu,rcas}.wgsl.
 import { fitRect, fitRectFree, nativeRect, type Rect } from './fit';
+import { isStageMode, resolveStageMode, stageAvailable } from './upscale/registry';
 
-export type PresentMode = 'fsr1' | 'nearest' | 'bilinear' | 'nearest-stretch' | 'native' | 'easu' | 'fsr1-pixel';
+export type PresentMode = 'fsr1' | 'nearest' | 'bilinear' | 'nearest-stretch' | 'native' | 'easu' | 'fsr1-pixel' | 'smooth' | 'smooth-scalefx' | 'smooth-sxbr' | 'fsrcnnx';
 export const PRESENT_MODES: readonly { id: PresentMode; label: string }[] = [
   { id: 'fsr1', label: 'FSR1' },
   { id: 'fsr1-pixel', label: 'FSR1 (pixel-art)' },
+  { id: 'smooth', label: 'Smooth (auto)' },
+  { id: 'smooth-scalefx', label: 'Smooth (ScaleFX)' },
+  { id: 'smooth-sxbr', label: 'Smooth (Super-xBR)' },
+  { id: 'fsrcnnx', label: 'FSRCNNX' },
   { id: 'easu', label: 'EASU only' },
   { id: 'bilinear', label: 'Bilinear' },
   { id: 'nearest', label: 'Nearest (integer)' },
@@ -21,6 +26,11 @@ export const DEFAULT_PRESENT_MODE: PresentMode = 'fsr1';
 /** RCAS sharpness in stops of attenuation: 0 = sharpest, 2 = softest. */
 export const DEFAULT_SHARPNESS = 0.2;
 export const MAX_SHARPNESS = 2;
+
+/** Whether a mode can be used now: the stage modes need a registered stage (upscale/registry.ts), the others always can. */
+export function modeAvailable(mode: PresentMode): boolean {
+  return !isStageMode(mode) || stageAvailable(mode);
+}
 
 export function parsePresentMode(v: unknown): PresentMode {
   return PRESENT_MODES.some((m) => m.id === v) ? (v as PresentMode) : DEFAULT_PRESENT_MODE;
@@ -75,10 +85,12 @@ export function packParams(out: Float32Array, easu: Float32Array, stops: number,
 export const PARAMS_FLOATS = 20;
 
 /** easu-rcas: both FSR1 passes; easu: the EASU upscale shown as is (no sharpening) */
-export type PresentPass = 'easu-rcas' | 'easu' | 'bilinear' | 'nearest';
+export type PresentPass = 'easu-rcas' | 'easu' | 'bilinear' | 'nearest' | 'stage';
 export interface PresentPlan {
   pass: PresentPass;
   rect: Rect;
+  /** pass 'stage': the concrete registered stage that runs (smooth resolves to scalefx / sxbr by scale) */
+  stage?: string | undefined;
 }
 
 /**
@@ -92,6 +104,12 @@ export function planPresent(mode: PresentMode, srcW: number, srcH: number, dstW:
   if (mode === 'nearest-stretch') return { pass: 'nearest', rect: fitRectFree(srcW, srcH, dstW, dstH) };
   if (mode === 'nearest') return { pass: 'nearest', rect: fitRect(srcW, srcH, dstW, dstH) };
   const rect = fitRectFree(srcW, srcH, dstW, dstH);
+  if (isStageMode(mode)) {
+    // a stage needs an upscale; below 1x, or without a registered stage, FSR1's own path presents (bilinear below 1x)
+    const stage = rect.w >= srcW && rect.h >= srcH ? resolveStageMode(mode, rect.w / srcW) : null;
+    if (stage) return { pass: 'stage', rect, stage };
+    return { pass: rect.w > srcW || rect.h > srcH ? 'easu-rcas' : 'bilinear', rect };
+  }
   if (mode === 'fsr1-pixel') return { pass: rect.w > srcW || rect.h > srcH ? 'easu-rcas' : 'bilinear', rect };
   if (mode === 'easu') return { pass: rect.w > srcW || rect.h > srcH ? 'easu' : 'bilinear', rect };
   if (mode === 'fsr1' && (rect.w > srcW || rect.h > srcH)) return { pass: 'easu-rcas', rect };

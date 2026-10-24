@@ -133,9 +133,9 @@ Counts below were observed by running the suites on 2026-10-24 (macOS arm64, Nod
 | --- | --- | --- |
 | C API, native (CTest) | `bash wasm/test.sh` (or `ctest` in `build-native`) | 3 CTest entries: `gen_fixtures` and `api` pass, `real_data` skipped without `D2_MPQ_DIR`. `api` is `wasm/tests/test_api.cpp` (about 300 lines; synthetic DC6/DT1/DS1/palette and a small MPQ built with StormLib). |
 | C API, wasm (node:test) | run by `wasm/test.sh` | **10 tests: 9 pass, 1 skipped** (real data, needs `D2_MPQ_DIR`). Core version/memory, five decoders, MPQ via NODEFS (stored/zlib/bzip2), override order, MEMFS, error paths. |
-| Web unit tests (Vitest) | `cd web && pnpm test` | **21 files, 175 tests, all pass** (about 1.4 s). |
+| Web unit tests (Vitest) | `cd web && pnpm test` | **28 files, 251 tests, all pass** (about 0.7 s; includes the smooth/FSRCNNX CPU references and the stage registry). |
 | d2full smoke (node) | `node --experimental-wasm-jspi wasm/full/smoke.mjs` | Passes without data: `--headless` exits 1 with the upstream "no Diablo II data" error (expected), banner logged, data error reported. The real-data run (scene, 30 frames, quit, exit 0) is skipped without `D2_MPQ_DIR`. |
-| Playwright e2e | `cd web && pnpm e2e` (Chromium on SwiftShader) | **21 tests: 16 pass, 5 skipped** (the 5 in `full.spec.ts` need `D2_MPQ_DIR`). With the user's game data (`D2_MPQ_DIR` set) `full.spec.ts` passes 5/5 (about 2.4 min, last run before the PR #7 merge). |
+| Playwright e2e | `cd web && pnpm e2e` (Chromium on SwiftShader) | **70 tests: 61 pass, 9 skipped** (the real-data ones need `D2_MPQ_DIR`; 2026-10-24, upscalers integration). With the user's game data `full.spec.ts` 5/5, `upscale-a-full.spec.ts` 2/2 and `upscale-int-full.spec.ts` 1/1 pass. |
 | Patch dry run | `bash wasm/full/apply-patches.sh --check` | Fails on rejects/fuzz; needs no game data, intended for CI. Not re-run for this document. |
 
 **Vitest files (tests):** `gpu/lighting` 27, `world/tilemap` 14, `gpu/fsr` 13, `gpu/geometry` 13, `full/audio` 12, `core/abi` 11,
@@ -154,6 +154,10 @@ added for this document. The numbers above are test counts only.
 | `e2e/ui.spec.ts` | 11 | 32 px bar and full-surface layout; debug overlay (`?debug=1`/Ctrl+Shift+G); mode select and tools popover; presentation controls persist across reload; resize keeps device-pixel backing store; fullscreen overlay and Ctrl+Shift+F; Ctrl+Shift+B keyboard reveal; hotkeys leave D2's F9-F12/Backquote alone; no-WebGPU notice; drop zone; bar screenshot. | no |
 | `e2e/mpq.spec.ts` | 1 | synthetic MPQ through the folder input and the DC6 viewer (needs wasm build and `wasm/test.sh` fixtures). | no (synthetic) |
 | `e2e/full.spec.ts` | 5 | title screen and character screens; **F2 scenario** (new character, camp, click-to-walk, held-button walk, Shift-click, Blood Moor via `debug goto 2`, melee, Save and Exit, page reload, character listed); wider-than-800 view with FSR1 and nearest; UI autoplay, auto-hiding bar, native width follows the page; optional archives (game runs without sound/video MPQs). | **yes** (`D2_MPQ_DIR`) |
+
+| `e2e/upscale-a.spec.ts`, `upscale-a-full.spec.ts` | 7 + 2 | stage seam with a fake stage, UI mask / scaler, render density, texture leaks (stage A). | full: yes |
+| `e2e/upscale-smooth.spec.ts`, `upscale-fsrcnnx.spec.ts` | stage B / C | dedither, ScaleFX, Super-xBR and FSRCNNX against their CPU references on synthetic input; each spec serves its test page (`web/test-pages/`) from its own vite dev server (not part of the build, never deployed). | no |
+| `e2e/upscale-int.spec.ts`, `upscale-int-full.spec.ts` | 6 + 1 | the real stages through the app at DPR 1 and 2 (stage -> EASU/RCAS or downsample + UI pass), compare fsrcnnx vs fsr1, async loading and failure, De-dither toggle, leaks with real stages; full: camp screenshots `up-int-*.png`. | full: yes |
 
 `e2e/fullhelpers.ts` holds helpers for the full-game scenarios.
 

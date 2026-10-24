@@ -3,7 +3,10 @@
 // RCAS sharpness and compare state, remembered in localStorage (a per-viewer convenience, every access guarded).
 // ?present=fsr1|bilinear|nearest|nearest-stretch|native, ?sharp=N, ?compare=1|0, ?cmpA=, ?cmpB=, ?split=0.5 win for that load only.
 import { DEFAULT_SPLIT, clampSplit } from '../gpu/compare';
-import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PRESENT_MODES, clampSharpness, parsePresentMode, type PresentMode } from '../gpu/fsr';
+import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PRESENT_MODES, clampSharpness, modeAvailable, parsePresentMode, type PresentMode } from '../gpu/fsr';
+import { DENSITIES, parseDensity, type Density } from '../gpu/density';
+import { UI_SCALERS, parseUiScaler, type UiScaler } from '../gpu/uimask';
+import { isStageMode, onStagesChanged, stageLoading } from '../gpu/upscale/registry';
 
 export interface CompareControlState {
   on: boolean;
@@ -23,8 +26,14 @@ export const COMPARE_PRESETS: readonly { id: string; label: string; a: PresentMo
 interface Target {
   setPresent(mode: PresentMode, sharpness?: number): void;
   setCompare?(c: CompareControlState): void;
+  setUiScaler?(m: UiScaler): void;
+  setDensity?(d: Density): void;
+  setDedither?(on: boolean): void;
 }
 
+const K_UI = 'd2.ui';
+const K_DENSITY = 'd2.density';
+const K_DEDITHER = 'd2.dedither';
 const K_MODE = 'd2.present';
 const K_SHARP = 'd2.sharpness';
 const K_CMP = 'd2.cmp';
@@ -35,6 +44,12 @@ const K_SHARP_A = 'd2.cmpSharpA';
 const K_SHARP_B = 'd2.cmpSharpB';
 export const DEFAULT_CMP_A: PresentMode = 'nearest-stretch';
 export const DEFAULT_CMP_B: PresentMode = 'fsr1';
+
+/** "0" / "false" / "off" turn de-dither off, anything else (or nothing) leaves the default (on) */
+export function parseDedither(v: string | null): boolean {
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+const isSmooth = (m: PresentMode): boolean => m === 'smooth' || m === 'smooth-scalefx' || m === 'smooth-sxbr';
 
 export function readStored(key: string): string | null {
   try {
@@ -54,6 +69,11 @@ export function writeStored(key: string, v: string): void {
 export interface PresentControls {
   mode: PresentMode;
   sharpness: number;
+  /** menus / HUD scaler and render density (?ui=, ?density=, localStorage) */
+  ui: UiScaler;
+  density: Density;
+  /** de-dither the world before the smooth stages (?dedither=0 turns it off; default on) */
+  dedither: boolean;
   compare: CompareControlState;
   /** the divider moved (drag / keys): apply + persist */
   setSplit(split: number, persist?: boolean): void;
@@ -73,9 +93,30 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
     preset.add(new Option('Presets\u2026', ''));
     for (const q of COMPARE_PRESETS) preset.add(new Option(q.label, q.id));
   }
+  const uiSel = document.getElementById('ui-scaler') as HTMLSelectElement | null;
+  const densitySel = document.getElementById('density') as HTMLSelectElement | null;
+  const dedBox = document.getElementById('dedither') as HTMLInputElement | null;
+  const dedLabel = dedBox?.closest('label') ?? null;
+  if (uiSel && uiSel.options.length === 0) for (const m of UI_SCALERS) uiSel.add(new Option(m.label, m.id));
+  if (densitySel && densitySel.options.length === 0) for (const m of DENSITIES) densitySel.add(new Option(m.label, m.id));
   for (const s of [sel, selA, selB]) {
     if (s && s.options.length === 0) for (const m of PRESENT_MODES) s.add(new Option(m.label, m.id));
   }
+  // stage modes without a registered stage are listed but disabled
+  const refreshAvailability = (): void => {
+    for (const s of [sel, selA, selB]) {
+      if (!s) continue;
+      for (const o of Array.from(s.options)) {
+        const m = PRESENT_MODES.find((x) => x.id === o.value);
+        if (!m) continue;
+        const ok = modeAvailable(m.id);
+        o.disabled = !ok;
+        o.text = !ok ? `${m.label} (not available)` : isStageMode(m.id) && stageLoading(m.id) ? `${m.label} (loading\u2026)` : m.label;
+      }
+    }
+  };
+  refreshAvailability();
+  onStagesChanged(refreshAvailability);
   const listeners: (() => void)[] = [];
   const urlMode = params.get('present');
   const urlSharp = params.get('sharp');
@@ -87,6 +128,9 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
     url !== null && Number.isFinite(Number(url)) ? clampSharpness(Number(url)) : st !== null && Number.isFinite(Number(st)) ? clampSharpness(Number(st)) : d;
   const c: PresentControls = {
     mode: parsePresentMode(urlMode ?? readStored(K_MODE) ?? DEFAULT_PRESENT_MODE),
+    ui: parseUiScaler(params.get('ui') ?? readStored(K_UI)),
+    density: parseDensity(params.get('density') ?? readStored(K_DENSITY)),
+    dedither: parseDedither(params.get('dedither') ?? readStored(K_DEDITHER)),
     sharpness: urlSharp !== null && Number.isFinite(Number(urlSharp)) ? clampSharpness(Number(urlSharp)) : stored !== null && Number.isFinite(Number(stored)) ? clampSharpness(Number(stored)) : DEFAULT_SHARPNESS,
     compare: {
       on: urlCmp !== null ? urlCmp === '1' : readStored(K_CMP) === '1',
@@ -108,9 +152,16 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
   c.compare.sharpA = num(params.get('sharpA'), readStored(K_SHARP_A), c.sharpness);
   c.compare.sharpB = num(params.get('sharpB'), readStored(K_SHARP_B), c.sharpness);
   // RCAS runs (and has a sharpness) in fsr1 and fsr1-pixel; EASU-only has none
-  const fsrSide = (m: PresentMode): boolean => m === 'fsr1' || m === 'fsr1-pixel';
+  const fsrSide = (m: PresentMode): boolean => m === 'fsr1' || m === 'fsr1-pixel' || isStageMode(m);
   function apply(): void {
     target.setPresent(c.mode, c.sharpness);
+    target.setUiScaler?.(c.ui);
+    target.setDensity?.(c.density);
+    target.setDedither?.(c.dedither);
+    if (dedBox) dedBox.checked = c.dedither;
+    if (dedLabel) dedLabel.hidden = !(c.compare.on ? isSmooth(c.compare.a) || isSmooth(c.compare.b) : isSmooth(c.mode));
+    if (uiSel) uiSel.value = c.ui;
+    if (densitySel) densitySel.value = c.density;
     target.setCompare?.({ ...c.compare });
     if (sel) {
       sel.value = c.mode;
@@ -143,6 +194,21 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
     }
     for (const fn of listeners) fn();
   }
+  uiSel?.addEventListener('change', () => {
+    c.ui = parseUiScaler(uiSel.value);
+    writeStored(K_UI, c.ui);
+    apply();
+  });
+  dedBox?.addEventListener('change', () => {
+    c.dedither = dedBox.checked;
+    writeStored(K_DEDITHER, c.dedither ? '1' : '0');
+    apply();
+  });
+  densitySel?.addEventListener('change', () => {
+    c.density = parseDensity(densitySel.value);
+    writeStored(K_DENSITY, c.density);
+    apply();
+  });
   sel?.addEventListener('change', () => {
     c.mode = parsePresentMode(sel.value);
     writeStored(K_MODE, c.mode);

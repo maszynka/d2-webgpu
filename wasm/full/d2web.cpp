@@ -11,7 +11,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 // All JS-side state lives in globalThis.__d2web, created by game.worker.ts (or by
 // the node smoke test); every EM_JS body below creates a default one when nobody did
@@ -32,10 +34,10 @@ EM_JS(int, d2web_frame_wanted_js, (), {
     return (!s.gated || (s.pool ? s.pool.wanted : s.want > 0)) ? 1 : 0;
 });
 
-EM_JS(void, d2web_present_js, (const std::uint8_t* p, int w, int h), {
+EM_JS(void, d2web_present_js, (const std::uint8_t* p, int w, int h, const std::uint8_t* ui, int uiLen), {
     if (!globalThis.__d2web) globalThis.__d2web = { events: [], want: 2, gated: false, frames: 0, present: null }; const s = globalThis.__d2web;
     s.frames++;
-    if (s.pool) s.pool.submit(HEAPU8, p, w, h);
+    if (s.pool) s.pool.submit(HEAPU8, p, w, h, ui, uiLen);
     else if (s.want > 0) s.want--;
 });
 
@@ -179,8 +181,85 @@ void saved() { d2web_saved_js(); }
 bool text_input_active() { return g_text_active; }
 void text_input(bool on) { g_text_active = on; }
 
+// --- UI rects ---------------------------------------------------------------
+bool g_ui_rec = false;
+namespace {
+struct Rc { int x0, y0, x1, y1; };
+std::vector<Rc> g_rects;
+bool g_armed = false;
+int g_ui_off = 0, g_screen = 0;
+// Trailer (little endian): u32 magic "2DI1", u8 screen, u8 flags, u16 count, count x (u16 x, y, w, h). web/src/full/uitrailer.ts
+std::uint8_t g_trailer[8 + 8 * kUiMaxRects];
+
+long area(const Rc& r) { return long(r.x1 - r.x0) * long(r.y1 - r.y0); }
+Rc unite(const Rc& a, const Rc& b) { return { std::min(a.x0, b.x0), std::min(a.y0, b.y0), std::max(a.x1, b.x1), std::max(a.y1, b.y1) }; }
+long overlap(const Rc& a, const Rc& b) {
+    const long w = std::min(a.x1, b.x1) - std::max(a.x0, b.x0), h = std::min(a.y1, b.y1) - std::max(a.y0, b.y0);
+    return w > 0 && h > 0 ? w * h : 0;
+}
+bool touches(const Rc& a, const Rc& b) { return a.x0 <= b.x1 + 1 && b.x0 <= a.x1 + 1 && a.y0 <= b.y1 + 1 && b.y0 <= a.y1 + 1; }
+// merge when the union wastes little (panel halves, glyph runs) so L-shapes do not swallow the world
+bool worth(const Rc& a, const Rc& b) {
+    if (!touches(a, b)) return false;
+    return area(unite(a, b)) <= (area(a) + area(b) - overlap(a, b)) * 5 / 4 + 64;
+}
+void add_rect(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    Rc n{ x, y, x + w, y + h };
+    for (bool merged = true; merged;) {
+        merged = false;
+        for (std::size_t i = 0; i < g_rects.size(); ++i)
+            if (worth(g_rects[i], n)) { n = unite(g_rects[i], n); g_rects[i] = g_rects.back(); g_rects.pop_back(); merged = true; break; }
+    }
+    if (g_rects.size() >= 512) {   // pathological: fold into the nearest-growth rect rather than grow without bound
+        std::size_t best = 0; long bg = -1;
+        for (std::size_t i = 0; i < g_rects.size(); ++i) { const long g = area(unite(g_rects[i], n)) - area(g_rects[i]); if (bg < 0 || g < bg) { bg = g; best = i; } }
+        g_rects[best] = unite(g_rects[best], n);
+        return;
+    }
+    g_rects.push_back(n);
+}
+}  // namespace
+
+void ui_add(int x, int y, int w, int h) { if (g_armed) add_rect(x + g_ui_off, y, w, h); }
+void ui_add_abs(int x, int y, int w, int h) { if (g_armed) add_rect(x, y, w, h); }
+void ui_frame_begin() { g_rects.clear(); g_armed = true; g_ui_off = 0; g_ui_rec = false; }
+void ui_begin() { g_ui_rec = g_armed; }
+void ui_end() { g_ui_rec = false; }
+void ui_offset(int dx) { g_ui_off = dx; }
+void ui_screen(int id) { g_screen = id; }
+
+namespace {
+// Clip to the frame, then merge the cheapest pairs until at most kUiMaxRects remain.
+int finish_rects(int w, int h) {
+    std::vector<Rc> v;
+    for (Rc r : g_rects) {
+        r.x0 = std::max(r.x0, 0); r.y0 = std::max(r.y0, 0); r.x1 = std::min(r.x1, w); r.y1 = std::min(r.y1, h);
+        if (r.x1 > r.x0 && r.y1 > r.y0) v.push_back(r);
+    }
+    while (v.size() > std::size_t(kUiMaxRects)) {
+        std::size_t bi = 0, bj = 1; long bg = -1;
+        for (std::size_t i = 0; i < v.size(); ++i)
+            for (std::size_t j = i + 1; j < v.size(); ++j) {
+                const long g = area(unite(v[i], v[j])) - area(v[i]) - area(v[j]) + overlap(v[i], v[j]);
+                if (bg < 0 || g < bg) { bg = g; bi = i; bj = j; }
+            }
+        v[bi] = unite(v[bi], v[bj]); v[bj] = v.back(); v.pop_back();
+    }
+    std::uint8_t* p = g_trailer;
+    auto u16 = [&](int x) { *p++ = std::uint8_t(x & 255); *p++ = std::uint8_t((x >> 8) & 255); };
+    *p++ = '2'; *p++ = 'D'; *p++ = 'I'; *p++ = '1';
+    *p++ = std::uint8_t(g_screen); *p++ = 0;
+    u16(g_screen == 1 ? int(v.size()) : 0);
+    if (g_screen == 1) for (const Rc& r : v) { u16(r.x0); u16(r.y0); u16(r.x1 - r.x0); u16(r.y1 - r.y0); }
+    return int(p - g_trailer);
+}
+}  // namespace
+
 void present(const void* rgba, int w, int h) {
-    d2web_present_js(static_cast<const std::uint8_t*>(rgba), w, h);
+    const int len = finish_rects(w, h);
+    d2web_present_js(static_cast<const std::uint8_t*>(rgba), w, h, g_trailer, len);
+    g_rects.clear(); g_armed = false; g_ui_rec = false; g_ui_off = 0; g_screen = 0;
 }
 
 int view_width() { return d2web_view_width_js(); }

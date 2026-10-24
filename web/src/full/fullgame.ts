@@ -267,7 +267,7 @@ export class FullGame {
   /** Call once per animation frame while the game is the active mode. */
   tick(): void {
     this.flushInput();
-    if (this.mailbox.flush((w, h, rgba) => this.renderer.presentRgba(w, h, rgba))) this.stats.shown++;
+    if (this.mailbox.flush((w, h, rgba, ui) => this.renderer.presentRgba(w, h, rgba, ui))) this.stats.shown++;
     this.stats.dropped = this.mailbox.dropped;
   }
 

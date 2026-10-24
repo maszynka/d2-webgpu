@@ -10,14 +10,22 @@ import rcasWgsl from './shaders/rcas.wgsl?raw';
 import lightLib from './shaders/light.wgsl?raw';
 import lightingWgsl from './shaders/lighting.wgsl?raw';
 import loupeWgsl from './shaders/loupe.wgsl?raw';
+import uiWgsl from './shaders/ui.wgsl?raw';
+import downsampleWgsl from './shaders/downsample.wgsl?raw';
 import { planCompare } from './compare';
+import { DEFAULT_DENSITY, densitySize, effectiveDpr, type Density } from './density';
+import { StageResample, type ResampleDeps } from './resample';
+import { clearStageFailed, createStage, markStageFailed, setStageLoading } from './upscale/registry';
+import type { UpscaleStage } from './upscale/stage';
+import { DEFAULT_UI_SCALER, maskKey, planMask, rasterizeMask, sharpPrescale, type MaskKind, type UiScaler } from './uimask';
+import type { UiInfo } from '../full/uitrailer';
 import { loupeLayout } from './loupe';
 import { LIGHT_PARAMS_BYTES, MAX_LIGHTS, packLightParams, type LightingState } from './lighting';
 import { surfaceWgslConstants } from './surface';
 import { ShelfPacker, type AtlasRect } from './atlas';
 import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
-import { backingSize, fitRect, type Rect } from './fit';
+import { fitRect, type Rect } from './fit';
 import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PARAMS_FLOATS, clampSharpness, easuConstants, packParams, pixelPrescale, planPresent, type PresentMode, type PresentPass } from './fsr';
 import { GpuTimer, type GpuTag } from './timer';
 import type { Camera } from '../world/camera';
@@ -36,6 +44,7 @@ export interface RendererOptions {
   height?: number;
 }
 
+const STAGE_RETRY_MS = 30_000; // a failed async stage (weights fetch) becomes selectable again after this
 const SCENE_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const INDEX_FORMAT: GPUTextureFormat = 'rg8uint'; // palette index, palette row
 const AUX_FORMAT: GPUTextureFormat = 'r8uint';
@@ -115,6 +124,13 @@ export interface PresentInfo {
   chains: number;
   /** nearest prescale factor before EASU ("FSR1 (pixel-art)"); 1 = none */
   prescale: number;
+  /** world stage that ran (concrete registered mode) for side A / single mode, null when none */
+  stage: string | null;
+  /** UI scaler state: setting, what the frame's mask covered, rect count, whether the UI pass ran */
+  ui: { scaler: UiScaler; screen: number | null; kind: MaskKind; rects: number; applied: boolean };
+  /** render density setting and the backing pixels per CSS pixel actually used (device dpr in auto) */
+  density: Density;
+  dprEffective: number;
   /** the loupe square on the canvas (device px) while it is drawn */
   loupe: { box: Rect; center: { x: number; y: number }; zoom: number; source: boolean } | null;
 }
@@ -163,6 +179,27 @@ export class Renderer {
   /** exact device-pixel size of the canvas from the ResizeObserver (null until it reports, or unsupported) */
   private devPx: { w: number; h: number } | null = null;
   private readonly timer: GpuTimer | null;
+  /** content-box size in CSS px from the ResizeObserver (render density 1x) */
+  private cssBox: { w: number; h: number } | null = null;
+  density: Density = DEFAULT_DENSITY;
+  uiScaler: UiScaler = DEFAULT_UI_SCALER;
+  /** the game's UI info of the current frame (screen id + rects); sticky until the next frame / setUi */
+  private ui: UiInfo | null = null;
+  private maskTex: GPUTexture | null = null;
+  private maskKeyNow = '';
+  private maskScratch = new Uint8Array(0);
+  private readonly uiBgl: GPUBindGroupLayout;
+  private readonly uiPipeline: GPURenderPipeline;
+  private readonly downPipeline: GPURenderPipeline;
+  private readonly uiBuf: GPUBuffer;
+  private readonly uiData = new Float32Array(12);
+  private uiBind: GPUBindGroup | null = null;
+  private uiBindFor: { src: GPUTextureView; mask: GPUTexture } | null = null;
+  /** live stages by concrete mode, resamplers by compare side; both dropped when a frame does not use them */
+  private readonly stages = new Map<string, UpscaleStage>();
+  private readonly resamplers = new Map<number, StageResample>();
+  private texCreated = 0;
+  private texDestroyed = 0;
   presentMode: PresentMode = DEFAULT_PRESENT_MODE;
   sharpness = DEFAULT_SHARPNESS;
   lastPresent: PresentInfo | null = null;
@@ -209,25 +246,25 @@ export class Renderer {
     this.canvasFormat = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device, format: this.canvasFormat, alphaMode: 'opaque' });
 
-    this.atlas = device.createTexture({
+    this.atlas = this.tex({
       label: 'index-atlas',
       size: [this.atlasSize, this.atlasSize],
       format: 'r8uint',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    this.colormaps = device.createTexture({
+    this.colormaps = this.tex({
       label: 'colormaps',
       size: [256, COLORMAP_ROWS_MAX],
       format: 'r8uint',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    this.palettes = device.createTexture({
+    this.palettes = this.tex({
       label: 'palettes',
       size: [256, PALETTE_ROWS_MAX],
       format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    this.scene = device.createTexture({
+    this.scene = this.tex({
       label: 'scene',
       size: [this.sceneW, this.sceneH],
       format: SCENE_FORMAT,
@@ -235,7 +272,7 @@ export class Renderer {
     });
     this.sceneView = this.scene.createView();
     const gTex = (label: string, format: GPUTextureFormat): GPUTexture =>
-      device.createTexture({
+      this.tex({
         label,
         size: [this.sceneW, this.sceneH],
         format,
@@ -437,6 +474,41 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
     });
     this.loupeBuf = device.createBuffer({ label: 'loupe-params', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.uiBgl = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+      ],
+    });
+    const uiModule = device.createShaderModule({ label: 'ui', code: uiWgsl });
+    this.uiPipeline = device.createRenderPipeline({
+      label: 'ui',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.uiBgl] }),
+      vertex: { module: uiModule, entryPoint: 'vs' },
+      fragment: { module: uiModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.uiBuf = device.createBuffer({ label: 'ui-params', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const downModule = device.createShaderModule({ label: 'downsample', code: downsampleWgsl });
+    this.downPipeline = device.createRenderPipeline({
+      label: 'downsample',
+      layout: easuLayout,
+      vertex: { module: downModule, entryPoint: 'vs' },
+      fragment: { module: downModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    try {
+      new ResizeObserver((entries) => {
+        for (const e of entries) {
+          const b = e.contentBoxSize?.[0];
+          if (b) this.cssBox = { w: b.inlineSize, h: b.blockSize };
+        }
+        this.presentDirty = true;
+      }).observe(canvas, { box: 'content-box' });
+    } catch {
+      /* content-box unsupported: clientWidth / clientHeight below */
+    }
     try {
       new ResizeObserver((entries) => {
         for (const e of entries) {
@@ -448,7 +520,7 @@ export class Renderer {
     } catch {
       /* no device-pixel-content-box: client size * dpr below */
     }
-    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 6) : null;
+    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 32) : null;
     this.sceneBinds = this.makeBinds(this.sceneView);
     device.addEventListener?.('uncapturederror', (e) => {
       console.error('WebGPU uncaptured error:', (e as GPUUncapturedErrorEvent).error.message);
@@ -531,6 +603,53 @@ export class Renderer {
     this.presentDirty = true;
   }
 
+  /** UI scaler for menus / HUD / panels (sharp bilinear, same as the world, nearest). */
+  setUiScaler(m: UiScaler): void {
+    this.uiScaler = m;
+    this.presentDirty = true;
+  }
+
+  /** Render density: 'auto' = device pixels, '1' = CSS pixels (the browser scales the canvas). */
+  setDensity(d: Density): void {
+    this.density = d;
+    this.presentDirty = true;
+  }
+
+  /** The game's UI info (screen id + rects) for the frame being presented; null = none (the world scaler everywhere). */
+  setUi(info: UiInfo | null): void {
+    this.ui = info;
+    this.presentDirty = true;
+  }
+
+  /** The UI info of the frame last presented (screen id, rects) - the HUD / tests read it. */
+  get currentUi(): UiInfo | null {
+    return this.ui;
+  }
+
+  /** Backing pixels per CSS pixel actually in use. */
+  get effectiveDpr(): number {
+    return effectiveDpr(this.canvas.width, this.canvas.clientWidth);
+  }
+
+  /** Textures created / destroyed through the renderer and alive in its stages (leak tests). */
+  textureStats(): { created: number; destroyed: number; live: number; stages: number; resample: number } {
+    let stages = 0;
+    for (const st of this.stages.values()) stages += st.liveTextures();
+    let resample = 0;
+    for (const rs of this.resamplers.values()) resample += rs.live;
+    return { created: this.texCreated, destroyed: this.texDestroyed, live: this.texCreated - this.texDestroyed, stages, resample };
+  }
+
+  private tex(desc: GPUTextureDescriptor): GPUTexture {
+    this.texCreated++;
+    return this.device.createTexture(desc);
+  }
+
+  private killTex(t: GPUTexture): void {
+    this.texDestroyed++;
+    t.destroy();
+  }
+
   /** Present the last source again (a setting or the loupe moved and no new frame arrived). */
   repaint(): void {
     if (!this.lastSrc) return;
@@ -541,7 +660,7 @@ export class Renderer {
 
   /** Match the canvas backing store to its size in device pixels (the observer's exact box, else client size * dpr). */
   resizeToDisplay(): void {
-    const { w, h } = backingSize(this.devPx, this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.device.limits.maxTextureDimension2D);
+    const { w, h } = densitySize(this.density, this.devPx, this.cssBox, this.canvas.clientWidth, this.canvas.clientHeight, window.devicePixelRatio || 1, this.device.limits.maxTextureDimension2D);
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
@@ -567,14 +686,14 @@ export class Renderer {
     const d = this.device;
     const rt = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
     if (ch) {
-      ch.easuTex.destroy();
-      ch.preTex?.destroy();
+      this.killTex(ch.easuTex);
+      if (ch.preTex) this.killTex(ch.preTex);
     }
     const bufA = ch?.bufA ?? d.createBuffer({ label: `present-params-a${k}`, size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const bufB = ch?.bufB ?? d.createBuffer({ label: `present-params-b${k}`, size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const preTex = k > 1 ? d.createTexture({ label: `prescale-${k}x`, size: [preW, preH], format: 'rgba8unorm', usage: rt }) : null;
+    const preTex = k > 1 ? this.tex({ label: `prescale-${k}x`, size: [preW, preH], format: 'rgba8unorm', usage: rt }) : null;
     const preView = preTex ? preTex.createView() : null;
-    const easuTex = d.createTexture({ label: 'easu-out', size: [r.w, r.h], format: 'rgba8unorm', usage: rt });
+    const easuTex = this.tex({ label: 'easu-out', size: [r.w, r.h], format: 'rgba8unorm', usage: rt });
     const ev = easuTex.createView();
     const bg = (buf: GPUBuffer, view: GPUTextureView): GPUBindGroup =>
       d.createBindGroup({ layout: this.easuBgl, entries: [{ binding: 0, resource: { buffer: buf } }, { binding: 1, resource: view }] });
@@ -598,8 +717,8 @@ export class Renderer {
   }
 
   private destroyChain(ch: FsrChain): void {
-    ch.easuTex.destroy();
-    ch.preTex?.destroy();
+    this.killTex(ch.easuTex);
+    if (ch.preTex) this.killTex(ch.preTex);
     ch.bufA.destroy();
     ch.bufB.destroy();
   }
@@ -611,18 +730,26 @@ export class Renderer {
 
   /** Release the presentation resources owned by the renderer's FSR / composite stages. */
   dispose(): void {
+    this.disposed = true;
     for (const ch of this.chains.values()) this.destroyChain(ch);
     this.chains.clear();
-    this.composite?.destroy();
+    if (this.composite) this.killTex(this.composite);
     this.composite = null;
-    this.frameTex?.destroy();
+    if (this.frameTex) this.killTex(this.frameTex);
     this.frameTex = null;
+    for (const st of this.stages.values()) st.destroy();
+    this.stages.clear();
+    for (const st of this.deadStages.splice(0)) st.destroy();
+    for (const rs of this.resamplers.values()) rs.destroy();
+    this.resamplers.clear();
+    if (this.maskTex) this.killTex(this.maskTex);
+    this.maskTex = null;
   }
 
   private ensureComposite(w: number, h: number): GPUTexture {
     if (!this.composite || this.composite.width !== w || this.composite.height !== h) {
-      this.composite?.destroy();
-      this.composite = this.device.createTexture({
+      if (this.composite) this.killTex(this.composite);
+      this.composite = this.tex({
         label: 'composite',
         size: [w, h],
         format: this.canvasFormat,
@@ -636,8 +763,98 @@ export class Renderer {
     return this.composite;
   }
 
+  /** De-dither before the smooth stages (read by their factories); toggling rebuilds the live smooth stages */
+  dedither = true;
+  setDedither(on: boolean): void {
+    if (on === this.dedither) return;
+    this.dedither = on;
+    for (const [mode, st] of this.stages) {
+      if (!mode.startsWith('smooth')) continue;
+      st.destroy();
+      this.stages.delete(mode);
+    }
+    this.presentDirty = true;
+  }
+  private readonly pendingStages = new Set<string>();
+  /** Stages whose encode threw: destroyed at the next present, after the frame that recorded their passes was submitted. */
+  private readonly deadStages: UpscaleStage[] = [];
+  private disposed = false;
+
+  /** The live stage for a concrete mode, or false while an async factory is still building it (presentDirty on resolve). */
+  private ensureStage(mode: string): boolean {
+    if (this.stages.has(mode)) return true;
+    if (this.pendingStages.has(mode)) return false;
+    let made: UpscaleStage | Promise<UpscaleStage>;
+    try {
+      made = createStage(mode, this.device);
+    } catch (e) {
+      console.error(`upscale stage ${mode} failed:`, e);
+      markStageFailed(mode);
+      return false;
+    }
+    if (!(made instanceof Promise)) {
+      this.stages.set(mode, made);
+      return true;
+    }
+    this.pendingStages.add(mode);
+    setStageLoading(mode, true);
+    made.then(
+      (st) => {
+        this.pendingStages.delete(mode);
+        if (this.disposed || this.stages.has(mode)) st.destroy();
+        else this.stages.set(mode, st);
+        this.presentDirty = true;
+        setStageLoading(mode, false);
+      },
+      (e: unknown) => {
+        console.error(`upscale stage ${mode} failed:`, e);
+        this.pendingStages.delete(mode);
+        this.presentDirty = true;
+        markStageFailed(mode);
+        setStageLoading(mode, false);
+        setTimeout(() => clearStageFailed(mode), STAGE_RETRY_MS); // e.g. a failed weights fetch: offer it again later
+      },
+    );
+    return false;
+  }
+
+  /** The resample deps stage outputs need (pipelines are the renderer's own). */
+  private resampleDeps(): ResampleDeps {
+    return {
+      device: this.device,
+      createTex: (d) => this.tex(d),
+      destroyTex: (t) => this.killTex(t),
+      easuBgl: this.easuBgl,
+      blitBgl: this.blitBgl,
+      easuPipeline: this.easuPipeline,
+      rcasPipeline: this.rcasPipeline,
+      blitPipeline: this.blitPipeline,
+      downPipeline: this.downPipeline,
+      nearest: this.blitSampler,
+    };
+  }
+
+  /** The native-resolution UI mask texture for this frame's plan (re-uploaded only when it changed); null when not needed. */
+  private ensureMask(kind: MaskKind, rects: readonly { x: number; y: number; w: number; h: number }[], w: number, h: number): GPUTexture {
+    if (!this.maskTex || this.maskTex.width !== w || this.maskTex.height !== h) {
+      if (this.maskTex) this.killTex(this.maskTex);
+      this.maskTex = this.tex({ label: 'ui-mask', size: [w, h], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      this.maskKeyNow = '';
+      this.uiBind = null;
+    }
+    const key = maskKey({ kind, rects: rects as never[] }, w, h);
+    if (key !== this.maskKeyNow) {
+      if (this.maskScratch.length < w * h) this.maskScratch = new Uint8Array(w * h);
+      rasterizeMask(this.maskScratch, w, h, kind === 'rects' ? rects : []);
+      this.device.queue.writeTexture({ texture: this.maskTex }, this.maskScratch as Uint8Array<ArrayBuffer>, { bytesPerRow: w, rowsPerImage: h }, [w, h]);
+      this.maskKeyNow = key;
+    }
+    return this.maskTex;
+  }
+
   /** Encode the passes that show a srcW x srcH texture on the canvas in the current presentation mode. */
   private encodePresent(enc: GPUCommandEncoder, binds: SrcBinds, srcW: number, srcH: number): void {
+    for (const st of this.deadStages.splice(0)) st.destroy();
     this.resizeToDisplay();
     this.presentDirty = false;
     this.lastSrc = { binds, w: srcW, h: srcH };
@@ -649,21 +866,33 @@ export class Renderer {
     this.lastRect = r;
     const maxTex = this.device.limits.maxTextureDimension2D;
     const kOf = (m: PresentMode, pass: PresentPass): number => (m === 'fsr1-pixel' && pass === 'easu-rcas' ? pixelPrescale(r, srcW, srcH, maxTex) : 1);
-    const segs: { pass: PresentPass; scissor: Rect | null; side: number; sharp: number; k: number }[] = cmp
+    type Seg = { pass: PresentPass; scissor: Rect | null; side: number; sharp: number; k: number; stage?: string | undefined };
+    const segs: Seg[] = cmp
       ? [
           { ...cmp.a, side: 0, sharp: this.compare.sharpA, k: kOf(cmp.a.mode, cmp.a.pass) },
           { ...cmp.b, side: 1, sharp: this.compare.sharpB, k: kOf(cmp.b.mode, cmp.b.pass) },
         ]
-      : [{ pass: plan!.pass, scissor: r, side: 0, sharp: this.sharpness, k: kOf(this.presentMode, plan!.pass) }];
+      : [{ pass: plan!.pass, scissor: r, side: 0, sharp: this.sharpness, k: kOf(this.presentMode, plan!.pass), stage: plan!.stage }];
+    // a stage that is not built yet (async factory in flight) presents with FSR1 until it resolves
+    for (const g of segs) {
+      if (g.pass !== 'stage' || !g.stage || this.ensureStage(g.stage)) continue;
+      g.pass = r.w > srcW || r.h > srcH ? 'easu-rcas' : 'bilinear';
+      g.stage = undefined;
+    }
     const loupeOn =
       this.loupe.on && this.loupe.visible && Number.isFinite(this.loupe.x) && Number.isFinite(this.loupe.y) && Number.isFinite(this.loupe.size) && this.loupe.size > 0 && cw > 0 && ch > 0;
     const canvasView = this.ctx.getCurrentTexture().createView();
     const target = loupeOn ? this.ensureComposite(cw, ch).createView() : canvasView;
     const clear = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
     const ks = [...new Set(segs.filter((g) => g.pass === 'easu-rcas' || g.pass === 'easu').map((g) => g.k))];
-    const timed = ks.length > 0 && (this.timer?.begin() ?? false);
+    const stageModes = [...new Set(segs.filter((g) => g.pass === 'stage' && g.stage).map((g) => g.stage!))];
+    // the UI pass: the game's UI pixels over the world result, with the UI scaler
+    const mplan = planMask(this.ui);
+    const uiOn = this.uiScaler !== 'world' && mplan.kind !== 'none';
+    const timed = (ks.length > 0 || stageModes.length > 0 || uiOn) && (this.timer?.begin() ?? false);
     let spanN = 0;
     const stamp = (): { timestampWrites?: GPURenderPassTimestampWrites } => (timed ? (spanN++, { timestampWrites: this.timer!.writes() }) : {});
+    const tagSides: GpuTag['sides'] = [];
     const chainSpans = new Map<number, number[]>();
     for (const k of ks) {
       const ch = this.fsrChain(k, binds, srcW, srcH, r);
@@ -702,24 +931,80 @@ export class Renderer {
       this.destroyChain(ch);
       this.chains.delete(k);
     }
-    const tagSides: GpuTag['sides'] = [];
+    // world stages: encode once per concrete mode, then bring each side's use of it to the rect
+    const stageOut = new Map<string, import('./upscale/stage').StageOutput>();
+    for (const mode of stageModes) {
+      const side = segs.find((g) => g.stage === mode)!.side;
+      try {
+        const st = this.stages.get(mode);
+        if (!st) throw new Error(`stage ${mode} not built`); // ensureStage built it above
+        const out = st.encode(enc, binds.view, srcW, srcH, (label) => {
+          if (!timed) return undefined;
+          tagSides.push({ side, label: `${mode}: ${label}`, spans: [spanN] });
+          return stamp().timestampWrites;
+        });
+        stageOut.set(mode, out);
+      } catch (e) {
+        console.error(`upscale stage ${mode} failed:`, e);
+        markStageFailed(mode);
+        const dead = this.stages.get(mode);
+        if (dead) this.deadStages.push(dead); // passes already recorded into enc may reference its textures
+        this.stages.delete(mode);
+        this.presentDirty = true; // next present falls back to FSR1
+      }
+    }
+    for (const [mode, st] of this.stages) {
+      if (stageModes.includes(mode)) continue;
+      st.destroy();
+      this.stages.delete(mode);
+    }
+    const finals = new Map<number, import('./resample').ResampleFinal>();
+    for (const g of segs) {
+      const out = g.pass === 'stage' && g.stage ? stageOut.get(g.stage) : undefined;
+      if (!out) continue;
+      let rs = this.resamplers.get(g.side);
+      if (!rs) {
+        rs = new StageResample(this.resampleDeps());
+        this.resamplers.set(g.side, rs);
+      }
+      finals.set(
+        g.side,
+        rs.prepare(enc, out, r, g.sharp, () => {
+          if (!timed) return undefined;
+          tagSides.push({ side: g.side, label: `${g.stage}: EASU`, spans: [spanN] });
+          return stamp().timestampWrites;
+        }),
+      );
+    }
+    for (const [side, rs] of this.resamplers) {
+      if (finals.has(side)) continue;
+      rs.destroy();
+      this.resamplers.delete(side);
+    }
     segs.forEach((g, i) => {
       const gpuPass = g.pass === 'easu-rcas' || g.pass === 'easu';
+      const fin = finals.get(g.side);
+      const stagePass = g.pass === 'stage' && fin !== undefined;
       let rcasSpan = -1;
       if (timed && gpuPass && g.pass === 'easu-rcas') rcasSpan = spanN;
+      const stageSpan = timed && stagePass && fin.kind !== 'copy' ? spanN : -1;
       const pass = enc.beginRenderPass({
         colorAttachments: [{ view: target, loadOp: i === 0 ? 'clear' : 'load', storeOp: 'store', clearValue: clear }],
-        ...(rcasSpan >= 0 ? stamp() : {}),
+        ...(rcasSpan >= 0 || stageSpan >= 0 ? stamp() : {}),
       });
       if (timed && gpuPass) {
         const label = `${g.k > 1 ? 'prescale+' : ''}EASU${g.pass === 'easu-rcas' ? '+RCAS' : ''}`;
         tagSides.push({ side: g.side, label, spans: [...(chainSpans.get(g.k) ?? []), ...(rcasSpan >= 0 ? [rcasSpan] : [])] });
       }
+      if (stageSpan >= 0) tagSides.push({ side: g.side, label: `${g.stage}: ${fin!.kind === 'down' ? 'downsample' : 'RCAS'}`, spans: [stageSpan] });
       const sc = g.scissor;
       if (sc) {
         pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
         pass.setScissorRect(sc.x, sc.y, sc.w, sc.h);
-        if (g.pass === 'easu-rcas') {
+        if (stagePass) {
+          pass.setPipeline(fin.pipeline);
+          pass.setBindGroup(0, fin.bind);
+        } else if (g.pass === 'easu-rcas') {
           pass.setPipeline(this.rcasPipeline);
           const ch = this.chains.get(g.k)!;
           pass.setBindGroup(0, g.side === 0 ? ch.rcasA : ch.rcasB);
@@ -734,6 +1019,29 @@ export class Renderer {
       }
       pass.end();
     });
+    let uiApplied = false;
+    if (uiOn && r.w > 0 && r.h > 0) {
+      const mask = this.ensureMask(mplan.kind, mplan.rects, srcW, srcH);
+      if (!this.uiBind || this.uiBindFor?.src !== binds.view || this.uiBindFor.mask !== mask) {
+        this.uiBind = this.device.createBindGroup({
+          layout: this.uiBgl,
+          entries: [{ binding: 0, resource: { buffer: this.uiBuf } }, { binding: 1, resource: binds.view }, { binding: 2, resource: mask.createView() }],
+        });
+        this.uiBindFor = { src: binds.view, mask };
+      }
+      const scale = Math.min(r.w / srcW, r.h / srcH);
+      this.uiData.set([r.x, r.y, r.w, r.h, srcW, srcH, sharpPrescale(scale), this.uiScaler === 'nearest' ? 1 : 0, mplan.kind === 'all' ? 1 : 0, 0, 0, 0]);
+      this.device.queue.writeBuffer(this.uiBuf, 0, this.uiData as Float32Array<ArrayBuffer>);
+      if (timed) tagSides.push({ side: 2, label: 'UI', spans: [spanN] });
+      const up = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'load', storeOp: 'store' }], ...stamp() });
+      up.setViewport(r.x, r.y, r.w, r.h, 0, 1);
+      up.setScissorRect(r.x, r.y, r.w, r.h);
+      up.setPipeline(this.uiPipeline);
+      up.setBindGroup(0, this.uiBind);
+      up.draw(3);
+      up.end();
+      uiApplied = true;
+    }
     if (timed) this.timer!.finish(enc, { key: tagSides.map((t) => `${t.side}:${t.label}`).join('|'), sides: tagSides });
     // the newest completed measurement, labelled by what it timed (it may lag a frame or two behind a mode change)
     const gpuParts: PresentInfo['gpuParts'] = [];
@@ -783,6 +1091,10 @@ export class Renderer {
       chains: this.chains.size,
       compare: cmp ? { a: cmp.a.mode, b: cmp.b.mode, passA: cmp.a.pass, passB: cmp.b.pass, splitPx: cmp.splitPx, prescaleA: segs[0]!.k, prescaleB: segs[1]!.k } : null,
       prescale: segs[0]!.k,
+      stage: segs[0]!.stage ?? null,
+      ui: { scaler: this.uiScaler, screen: this.ui ? this.ui.screen : null, kind: mplan.kind, rects: mplan.rects.length, applied: uiApplied },
+      density: this.density,
+      dprEffective: this.effectiveDpr,
       loupe: loupeInfo,
     };
   }
@@ -846,12 +1158,13 @@ export class Renderer {
    * Show a finished RGBA frame (the full game's CPU framebuffer, any width, e.g. widescreen) through the same
    * presentation path as the scene (FSR1 / nearest / bilinear): upload to an rgba8unorm texture.
    */
-  presentRgba(width: number, height: number, rgba: Uint8Array): void {
+  presentRgba(width: number, height: number, rgba: Uint8Array, ui?: UiInfo | null): void {
+    if (ui !== undefined) this.ui = ui;
     if (rgba.length < width * height * 4) throw new Error('presentRgba: pixel buffer too small');
     const device = this.device;
     if (!this.frameTex || this.frameW !== width || this.frameH !== height) {
-      this.frameTex?.destroy();
-      this.frameTex = device.createTexture({
+      if (this.frameTex) this.killTex(this.frameTex);
+      this.frameTex = this.tex({
         label: 'full-frame',
         size: [width, height],
         format: 'rgba8unorm',
