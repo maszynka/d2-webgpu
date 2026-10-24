@@ -22,14 +22,21 @@ export function stats(buf: Buffer): { colours: number; lit: number } {
   return { colours: seen.size, lit };
 }
 
-/** game pixel (800x600 space) -> page coordinates, replicating the renderer's letterbox */
-export async function gamePoint(page: Page, x: number, y: number, fbW = 800, fbH = 600): Promise<{ x: number; y: number }> {
+/**
+ * game pixel -> page coordinates, from where the renderer actually put the frame (any presentation mode, any width).
+ * x counts from the centre 800x600 of a wide frame, like upstream's mouse coordinates (menus: the whole 800 frame).
+ */
+export async function gamePoint(page: Page, x: number, y: number): Promise<{ x: number; y: number }> {
   const box = (await page.locator('canvas#view').boundingBox())!;
-  const f = Math.min(box.width / fbW, box.height / fbH);
-  const s = f >= 1 ? Math.floor(f) : f;
-  const w = Math.floor(fbW * s);
-  const h = Math.floor(fbH * s);
-  return { x: box.x + (box.width - w) / 2 + (x + 0.5) * s, y: box.y + (box.height - h) / 2 + (y + 0.5) * s };
+  const p = await page.evaluate(() => {
+    const c = document.querySelector('canvas#view') as HTMLCanvasElement;
+    const pr = window.__d2!.present!;
+    return { r: pr.rect, srcW: pr.srcW, srcH: pr.srcH, cw: c.width, ch: c.height };
+  });
+  const gx = x + (p.srcW - 800) / 2;
+  const dx = p.r.x + ((gx + 0.5) / p.srcW) * p.r.w;
+  const dy = p.r.y + ((y + 0.5) / p.srcH) * p.r.h;
+  return { x: box.x + (dx / p.cw) * box.width, y: box.y + (dy / p.ch) * box.height };
 }
 
 export async function moveTo(page: Page, x: number, y: number): Promise<void> {
@@ -103,18 +110,22 @@ export async function perfReset(page: Page): Promise<void> {
 }
 
 /** Open the page, hand it the MPQs (hard-linked scratch folder, nothing copied) and press Play. Resolves with seconds to the first frames. */
-export async function openAndPlay(page: Page): Promise<number> {
+export async function openAndPlay(page: Page, only?: RegExp): Promise<number> {
   await page.goto('/');
   expect(await page.evaluate(() => 'gpu' in navigator && !!navigator.gpu), 'WebGPU').toBe(true);
   await page.waitForFunction(() => window.__d2?.core?.mode === 'wasm', undefined, { timeout: 30_000 });
-  const names = fs.readdirSync(mpqDir!).filter((n) => /\.mpq$/i.test(n));
-  expect(names.length).toBeGreaterThan(3);
+  const names = fs.readdirSync(mpqDir!).filter((n) => /\.mpq$/i.test(n) && (!only || only.test(n)));
+  expect(names.length).toBeGreaterThan(only ? 2 : 3);
   const link = fs.mkdtempSync(path.join(os.tmpdir(), 'd2links-'));
   for (const n of names) fs.linkSync(path.join(mpqDir!, n), path.join(link, n));
   await page.setInputFiles('#folder', link);
-  await expect(page.locator('#game-status')).toContainText('opened', { timeout: 60_000 });
+  // the status shows "opened ..." only briefly when autoplay starts the game at once
+  await page.waitForFunction(() => /opened/.test(document.getElementById('game-status')?.textContent ?? '') || window.__d2?.mode === 'full', undefined, { timeout: 60_000 });
   const t0 = Date.now();
-  await page.click('#play-btn');
+  // picking the files starts the game by itself (autoplay); press Play only when it has not
+  await page.waitForFunction(() => window.__d2?.mode === 'full', undefined, { timeout: 3000 }).catch(async () => {
+    await page.click('#play-btn');
+  });
   await page.waitForFunction(() => (window.__d2?.full?.shown ?? 0) > 5, undefined, { timeout: 240_000 }).catch(async (e) => {
     console.log('stuck:', JSON.stringify(await page.evaluate(() => ({ ...window.__d2?.full, logs: window.__d2?.full?.logs.slice(-5) }))));
     throw e;

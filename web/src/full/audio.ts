@@ -66,7 +66,7 @@ export class AudioEngine {
   private readonly master: NodeLike & { gain: ParamLike };
   private listener = 1;
   private user = 1;
-  readonly stats = { messages: 0, ops: 0, plays: 0, buffers: 0, missing: 0 };
+  readonly stats = { messages: 0, ops: 0, plays: 0, buffers: 0, missing: 0, errors: 0 };
 
   constructor(private readonly ctx: ContextLike) {
     this.master = ctx.createGain();
@@ -96,33 +96,41 @@ export class AudioEngine {
     this.stats.messages++;
     for (const op of ops) {
       this.stats.ops++;
-      switch (op.o) {
-        case 'buf':
-          this.buffers.set(op.k, pcmToBuffer(this.ctx, op.data, op.ch, op.rate, op.bits));
-          this.stats.buffers++;
-          break;
-        case 'free':
-          this.buffers.delete(op.k);
-          break;
-        case 'play':
-          this.play(op);
-          break;
-        case 'set': {
-          const v = this.voices.get(op.v);
-          if (!v) break;
-          const t = this.ctx.currentTime;
-          v.gain.gain.setTargetAtTime(op.g, t, SMOOTH);
-          v.pan.pan.setTargetAtTime(op.p, t, SMOOTH);
-          break;
-        }
-        case 'stop':
-          this.stopVoice(op.v);
-          break;
-        case 'master':
-          this.listener = op.g;
-          this.applyMaster();
-          break;
+      try {
+        this.apply(op);
+      } catch {
+        this.stats.errors++; // one bad command (a refused node, a detached context) must not drop the rest of the batch
       }
+    }
+  }
+
+  private apply(op: AudioOp): void {
+    switch (op.o) {
+      case 'buf':
+        this.buffers.set(op.k, pcmToBuffer(this.ctx, op.data, op.ch, op.rate, op.bits));
+        this.stats.buffers++;
+        break;
+      case 'free':
+        this.buffers.delete(op.k);
+        break;
+      case 'play':
+        this.play(op);
+        break;
+      case 'set': {
+        const v = this.voices.get(op.v);
+        if (!v) break;
+        const t = this.ctx.currentTime;
+        v.gain.gain.setTargetAtTime(op.g, t, SMOOTH);
+        v.pan.pan.setTargetAtTime(op.p, t, SMOOTH);
+        break;
+      }
+      case 'stop':
+        this.stopVoice(op.v);
+        break;
+      case 'master':
+        this.listener = op.g;
+        this.applyMaster();
+        break;
     }
   }
 
@@ -133,7 +141,7 @@ export class AudioEngine {
       this.stats.missing++;
       return;
     }
-    const offset = op.off / buffer.sampleRate;
+    const offset = Math.max(0, op.off) / buffer.sampleRate; // a negative offset would make start() throw
     if (!op.loop && offset >= buffer.duration) return;
     const src = this.ctx.createBufferSource();
     const gain = this.ctx.createGain();
@@ -153,7 +161,12 @@ export class AudioEngine {
       gain.disconnect();
       pan.disconnect();
     };
-    src.start(0, op.loop ? offset % buffer.duration : offset);
+    try {
+      src.start(0, op.loop ? offset % buffer.duration : offset);
+    } catch (e) {
+      this.stopVoice(op.v);
+      throw e;
+    }
     this.stats.plays++;
   }
 

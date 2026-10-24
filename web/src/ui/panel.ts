@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// DOM glue for the game-files toolbar (index.html #tools).
+// DOM glue for the bar's game-files controls: folder picker / fallback input / drop / reconnect, the mode select, the
+// tools popover, status line, progress strip and the missing-archives card (index.html, docs/design/ui.md).
 
 import { DEFAULT_MAP, KNOWN_PALETTES, KNOWN_PATHS, ACT1_PALETTE } from '../assets/mpq';
 import {
@@ -13,6 +14,7 @@ import {
   type FsDirHandle,
   type HandleStore,
 } from '../assets/picker';
+import { filesFromDrop, hasFiles } from './drop';
 
 export interface ViewRequest {
   path: string;
@@ -21,9 +23,25 @@ export interface ViewRequest {
   direction: number;
 }
 
+/** What opening a folder found (main.ts fills it in after mounting the archives). */
+export interface FolderResult {
+  /** status line text, `error` = shown in the error colour */
+  status: string;
+  error: boolean;
+  /** required archives that are absent: Play is off, the missing-archives card is shown */
+  requiredMissing: string[];
+  /** archives that were found (base file names) */
+  found: string[];
+  /** the folder can start the game (nothing required is missing) */
+  canPlay: boolean;
+}
+
+export type UiState = 'nofiles' | 'reconnect' | 'loading' | 'ready' | 'playing' | 'failed';
+export type ModeName = 'play' | 'demo' | 'view' | 'map';
+
 export interface PanelHandlers {
-  /** Candidate files from a folder (all of them for the fallback input, only MPQs for the handle path). */
-  onFolder(files: File[], label: string): void | Promise<void>;
+  /** Candidate files from a folder. `fresh`: the user picked them in this visit (a remembered folder is not fresh). */
+  onFolder(files: File[], label: string, fresh: boolean): Promise<FolderResult>;
   onView(req: ViewRequest): void | Promise<void>;
   onMap(path: string): void | Promise<void>;
   onDemo(): void;
@@ -39,19 +57,51 @@ function el<T extends HTMLElement>(id: string): T {
   return e as T;
 }
 
+function lsGet(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function lsSet(k: string, v: string): void {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* ignore */
+  }
+}
+
 export class Panel {
   private readonly status = el('game-status');
   private readonly tools = el('game-tools');
+  private readonly about = el('about');
+  private readonly toolsBtn = el<HTMLButtonElement>('tools-btn');
+  private readonly brand = el<HTMLButtonElement>('brand');
+  private readonly mode = el<HTMLSelectElement>('mode');
+  private readonly playBtn = el<HTMLButtonElement>('play-btn');
   private readonly path = el<HTMLInputElement>('path');
   private readonly pal = el<HTMLInputElement>('pal');
   private readonly mosaic = el<HTMLInputElement>('mosaic');
   private readonly dir = el<HTMLInputElement>('dir');
   private readonly regrantBtn = el<HTMLButtonElement>('regrant');
+  private readonly pickBtn = el<HTMLButtonElement>('pick');
+  private readonly folderLabel = el('folder-label');
+  private readonly progress = el('progress');
+  private readonly missing = el('mpq-missing');
   private pending: FsDirHandle | null = null;
+  private lastFolder: { files: File[]; label: string } | null = null;
+  state: UiState = 'nofiles';
+  /** the folder holds everything the game needs */
+  private canPlay = false;
+  private hasFiles = false;
+  private enabled = true;
 
   constructor(
     private readonly h: PanelHandlers,
     private readonly store: HandleStore = idbHandleStore,
+    /** called when the state changes (main.ts publishes it) */
+    private readonly onState: (s: UiState) => void = () => undefined,
   ) {
     for (const [id, items] of [['known-paths', KNOWN_PATHS], ['known-pals', KNOWN_PALETTES]] as const) {
       const dl = el<HTMLDataListElement>(id);
@@ -63,20 +113,17 @@ export class Panel {
     }
     this.path.value = KNOWN_PATHS[0] ?? '';
     this.pal.value = ACT1_PALETTE;
-
-    const pick = el<HTMLButtonElement>('pick');
-    if (!supportsDirectoryPicker()) pick.hidden = true;
-    pick.addEventListener('click', () => void this.pickFolder());
+    this.pickBtn.hidden = !supportsDirectoryPicker();
+    this.folderLabel.hidden = supportsDirectoryPicker();
+    this.pickBtn.addEventListener('click', () => void this.pickFolder());
     this.regrantBtn.addEventListener('click', () => void this.regrant());
     el<HTMLInputElement>('folder').addEventListener('change', (e) => {
       const input = e.target as HTMLInputElement;
       const files = Array.from(input.files ?? []);
-      void this.run(async () => h.onFolder(files, 'selected folder'));
+      void this.load(files, 'selected folder', true);
     });
     el('view-btn').addEventListener('click', () =>
-      void this.run(async () =>
-        h.onView({ path: this.path.value.trim(), palette: this.pal.value.trim() || ACT1_PALETTE, mosaic: this.mosaic.checked, direction: Math.max(0, Number(this.dir.value) || 0) }),
-      ),
+      void this.run(async () => h.onView({ path: this.path.value.trim(), palette: this.pal.value.trim() || ACT1_PALETTE, mosaic: this.mosaic.checked, direction: Math.max(0, Number(this.dir.value) || 0) })),
     );
     el('map-btn').addEventListener('click', () => {
       const p = this.path.value.trim();
@@ -85,40 +132,157 @@ export class Panel {
       void this.run(async () => h.onMap(path));
     });
     el('demo-btn').addEventListener('click', () => h.onDemo());
-    el('play-btn').addEventListener('click', () => void this.run(async () => h.onPlay()));
-    const slider = el<HTMLInputElement>('volume');
-    try {
-      const saved = localStorage.getItem('d2.volume');
-      if (saved !== null && Number.isFinite(Number(saved))) slider.value = saved;
-    } catch {
-      /* storage unavailable: keep the default */
+    this.playBtn.addEventListener('click', () => void this.run(async () => h.onPlay()));
+    this.mode.addEventListener('change', () => {
+      const m = this.mode.value as ModeName;
+      if (m === 'play') void this.run(async () => h.onPlay());
+      else if (m === 'demo') h.onDemo();
+      else this.togglePopover(this.tools, true);
+    });
+    this.toolsBtn.addEventListener('click', () => this.togglePopover(this.tools));
+    this.brand.addEventListener('click', () => this.togglePopover(this.about));
+    for (const pop of [this.tools, this.about]) {
+      pop.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          this.closePopovers();
+          (pop === this.tools ? this.toolsBtn : this.brand).focus();
+        }
+      });
     }
+    el('mpq-retry').addEventListener('click', () => {
+      this.missing.hidden = true;
+      if (supportsDirectoryPicker()) void this.pickFolder();
+      else el<HTMLInputElement>('folder').click();
+    });
+    el('mpq-continue').addEventListener('click', () => {
+      this.missing.hidden = true;
+    });
+    const slider = el<HTMLInputElement>('volume');
+    const saved = lsGet('d2.volume');
+    if (saved !== null && Number.isFinite(Number(saved))) slider.value = saved;
     slider.addEventListener('input', () => {
-      try {
-        localStorage.setItem('d2.volume', slider.value);
-      } catch {
-        /* ignore */
-      }
+      lsSet('d2.volume', slider.value);
       h.onVolume(this.volume);
     });
+    const auto = el<HTMLInputElement>('autoplay');
+    auto.checked = lsGet('d2.autoplay') !== '0';
+    auto.addEventListener('change', () => lsSet('d2.autoplay', auto.checked ? '1' : '0'));
+    const hk = el<HTMLInputElement>('hotkeys');
+    hk.checked = lsGet('d2.hotkeys') !== '0';
+    hk.addEventListener('change', () => lsSet('d2.hotkeys', hk.checked ? '1' : '0'));
+    this.attachDrop();
+    this.syncCapabilities();
+  }
+
+  // --- popovers -------------------------------------------------------------
+
+  get popoverOpen(): boolean {
+    return !this.tools.hidden || !this.about.hidden;
+  }
+
+  private togglePopover(pop: HTMLElement, open?: boolean): void {
+    const show = open ?? pop.hidden;
+    this.closePopovers();
+    pop.hidden = !show;
+    const btn = pop === this.tools ? this.toolsBtn : this.brand;
+    btn.setAttribute('aria-expanded', String(show));
+    this.onPopover();
+  }
+
+  closePopovers(): void {
+    for (const [pop, btn] of [[this.tools, this.toolsBtn], [this.about, this.brand]] as const) {
+      pop.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+    }
+    this.onPopover();
+  }
+
+  /** hook: the bar re-evaluates its auto-hide when a popover opens or closes */
+  onPopover: () => void = () => undefined;
+
+  // --- state ----------------------------------------------------------------
+
+  private setState(s: UiState): void {
+    this.state = s;
+    this.onState(s);
+  }
+  setUiState(s: UiState): void {
+    this.setState(s);
   }
 
   setStatus(text: string, error = false): void {
     this.status.textContent = text;
+    this.status.title = text;
     this.status.classList.toggle('err', error);
   }
 
-  enableGame(on: boolean): void {
-    this.tools.hidden = !on;
+  /** Indeterminate (true), a fraction 0..1, or off (null). */
+  setProgress(p: number | true | null): void {
+    if (p === null) {
+      this.progress.hidden = true;
+      this.progress.removeAttribute('aria-valuenow');
+      return;
+    }
+    this.progress.hidden = false;
+    if (p === true) this.progress.removeAttribute('aria-valuenow');
+    else {
+      this.progress.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+      this.progress.style.setProperty('--p', String(p));
+    }
+  }
+
+  /** Controls for the file-dependent modes; `why` explains a disabled Play. */
+  setFiles(hasFiles: boolean, canPlay: boolean, why = ''): void {
+    this.hasFiles = hasFiles;
+    this.canPlay = canPlay;
+    this.playWhy = why;
+    this.syncCapabilities();
+  }
+  private playWhy = '';
+
+  /** WebGPU / core missing: the file controls stay off. */
+  setEnabled(on: boolean): void {
+    this.enabled = on;
+    this.syncCapabilities();
+  }
+
+  private syncCapabilities(): void {
+    for (const o of Array.from(this.mode.options)) {
+      if (o.value === 'view' || o.value === 'map') o.disabled = !this.hasFiles;
+      if (o.value === 'play') o.disabled = !this.canPlay;
+    }
+    this.mode.title = this.canPlay ? '' : this.hasFiles ? this.playWhy : 'Open the game folder first';
+    this.playBtn.hidden = !this.hasFiles;
+    this.playBtn.disabled = !this.canPlay && !this.isPlaying;
+    this.playBtn.title = this.canPlay || this.isPlaying ? 'Run the full game' : this.playWhy;
+    this.playBtn.classList.toggle('primary', this.canPlay && !this.isPlaying);
+    for (const e of [this.pickBtn, this.regrantBtn, el<HTMLInputElement>('folder')]) e.disabled = !this.enabled;
+    this.mode.disabled = !this.enabled;
+  }
+
+  /** The mode select follows what is shown. */
+  setMode(m: ModeName): void {
+    this.mode.value = m;
+  }
+
+  private isPlaying = false;
+  setPlaying(on: boolean): void {
+    this.isPlaying = on;
+    this.playBtn.textContent = on ? 'Stop game' : 'Play';
+    this.mode.value = on ? 'play' : this.mode.value === 'play' ? 'demo' : this.mode.value;
+    this.syncCapabilities();
   }
 
   /** Game volume 0..1 (the slider). */
   get volume(): number {
     return Number(el<HTMLInputElement>('volume').value) / 100;
   }
-
-  setPlaying(on: boolean): void {
-    el('play-btn').textContent = on ? 'Stop game' : 'Play';
+  get autoplay(): boolean {
+    return el<HTMLInputElement>('autoplay').checked && !['view', 'map', 'demo'].includes(new URLSearchParams(location.search).get('mode') ?? '');
+  }
+  get hotkeys(): boolean {
+    return el<HTMLInputElement>('hotkeys').checked;
   }
 
   private async run(fn: () => Promise<void>): Promise<void> {
@@ -129,10 +293,49 @@ export class Panel {
     }
   }
 
-  private async useHandle(handle: FsDirHandle): Promise<void> {
+  // --- loading a folder -----------------------------------------------------
+
+  private async load(files: File[], label: string, fresh: boolean): Promise<void> {
+    this.lastFolder = { files, label };
+    this.missing.hidden = true;
+    this.setState('loading');
+    this.setProgress(true);
+    this.setStatus(`Reading ${label}...`);
+    try {
+      const r = await this.h.onFolder(files, label, fresh);
+      this.setStatus(r.status, r.error);
+      this.setFiles(true, r.canPlay, r.canPlay ? '' : `Missing required archives: ${r.requiredMissing.join(', ')}`);
+      this.setState('ready');
+      if (r.requiredMissing.length > 0) {
+        el('mpq-missing-list').textContent = `"${label}" has no: ${r.requiredMissing.join(', ')}`;
+        el('mpq-found-list').textContent = `found: ${r.found.join(', ') || 'none'}`;
+        this.missing.hidden = false;
+        el('mpq-retry').focus();
+      } else if (fresh && this.autoplay) {
+        await this.h.onPlay();
+      }
+    } catch (e) {
+      this.setStatus(e instanceof Error ? e.message : String(e), true);
+      this.setState(this.hasFiles ? 'ready' : 'nofiles');
+    } finally {
+      this.setProgress(null);
+    }
+  }
+
+  private async useHandle(handle: FsDirHandle, fresh: boolean): Promise<void> {
+    this.setState('loading');
+    this.setProgress(true);
     this.setStatus(`Reading ${handle.name}...`);
-    const files = await collectMpqFiles(handle);
-    await this.h.onFolder(files, handle.name);
+    let files: File[];
+    try {
+      files = await collectMpqFiles(handle);
+    } catch (e) {
+      this.setProgress(null);
+      this.setStatus(e instanceof Error ? e.message : String(e), true);
+      this.setState('nofiles');
+      return;
+    }
+    await this.load(files, handle.name, fresh);
   }
 
   private async pickFolder(): Promise<void> {
@@ -146,7 +349,7 @@ export class Panel {
       }
       if ((await readPermission(handle, true)) !== 'granted') throw new Error('Read access to the folder was not granted.');
       await this.store.set(handle);
-      await this.useHandle(handle);
+      await this.useHandle(handle, true);
     });
   }
 
@@ -157,20 +360,55 @@ export class Panel {
       if (!(await reGrant(handle))) throw new Error('Read access to the saved folder was not granted.');
       this.regrantBtn.hidden = true;
       this.pending = null;
-      await this.useHandle(handle);
+      await this.useHandle(handle, true); // a click this visit: counts as picking
     });
   }
 
-  /** On load: reopen the remembered folder (a click is needed when the browser dropped the permission). */
+  /** On load: reopen the remembered folder (a click is needed when the browser dropped the permission). It never autoplays. */
   async restore(): Promise<void> {
     if (!supportsDirectoryPicker()) return;
     const r = await restoreHandle(this.store);
-    if (r.state === 'granted') await this.run(() => this.useHandle(r.handle));
+    if (r.state === 'granted') await this.useHandle(r.handle, false);
     else if (r.state === 'needs-permission' || r.state === 'denied') {
       this.pending = r.handle;
       this.regrantBtn.textContent = `Reconnect "${r.handle.name}"`;
       this.regrantBtn.hidden = false;
+      this.setState('reconnect');
       this.setStatus(`Saved game folder "${r.handle.name}" needs read access again.`);
     }
+  }
+
+  private attachDrop(): void {
+    const zone = el('drop');
+    let depth = 0;
+    window.addEventListener('dragenter', (e) => {
+      if (!this.enabled || !hasFiles(e.dataTransfer)) return;
+      depth++;
+      zone.hidden = false;
+    });
+    window.addEventListener('dragover', (e) => {
+      if (this.enabled && hasFiles(e.dataTransfer)) e.preventDefault();
+    });
+    window.addEventListener('dragleave', () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) zone.hidden = true;
+    });
+    window.addEventListener('drop', (e) => {
+      if (!hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      depth = 0;
+      zone.hidden = true;
+      if (!this.enabled || !e.dataTransfer) return;
+      void (async () => {
+        const d = await filesFromDrop(e.dataTransfer!);
+        if (d.handle) await this.store.set(d.handle);
+        await this.load(d.files, d.label, true);
+      })();
+    });
+  }
+
+  /** Re-run the last folder (retry after the user fixes something). */
+  get folder(): { files: File[]; label: string } | null {
+    return this.lastFolder;
   }
 }

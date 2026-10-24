@@ -206,6 +206,26 @@ describe('AudioEngine (main thread voice registry)', () => {
     expect(ctx.resumed).toBe(1);
   });
 
+  it('clamps a negative offset to 0 and survives a start() that throws (rest of the batch still runs)', () => {
+    const { e, sources } = engine();
+    e.handle([{ o: 'play', v: 1, k: 'a', g: 1, p: 0, loop: false, off: -40 }]);
+    expect(sources[0]!.started).toEqual({ when: 0, offset: 0 });
+    const orig = MockSource.prototype.start;
+    MockSource.prototype.start = () => {
+      throw new Error('boom');
+    };
+    try {
+      e.handle([
+        { o: 'play', v: 2, k: 'a', g: 1, p: 0, loop: false, off: 0 },
+        { o: 'master', g: 0.5 },
+      ]);
+    } finally {
+      MockSource.prototype.start = orig;
+    }
+    expect(e.stats.errors).toBe(1);
+    expect(e.activeVoices).toBe(1); // the failed voice was not left registered
+  });
+
   it('bridge -> engine round trip', () => {
     const m = mockContext();
     const e = new AudioEngine(m.ctx);

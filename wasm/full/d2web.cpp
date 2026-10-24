@@ -39,6 +39,12 @@ EM_JS(void, d2web_present_js, (const std::uint8_t* p, int w, int h), {
     else if (s.want > 0) s.want--;
 });
 
+// The game view width the page wants (viewW), 800 until it posts one (game.worker.ts 'view' message).
+EM_JS(int, d2web_view_width_js, (), {
+    const s = globalThis.__d2web;
+    return s && s.viewW ? s.viewW | 0 : 800;
+});
+
 // The page flushes IndexedDB right after a character save (worker: __d2web.onSaved).
 EM_JS(void, d2web_saved_js, (), {
     const s = globalThis.__d2web;
@@ -176,6 +182,8 @@ void text_input(bool on) { g_text_active = on; }
 void present(const void* rgba, int w, int h) {
     d2web_present_js(static_cast<const std::uint8_t*>(rgba), w, h);
 }
+
+int view_width() { return d2web_view_width_js(); }
 
 bool frame_wanted() { return d2web_frame_wanted_js() != 0; }
 

@@ -5,6 +5,8 @@
 
 import spriteWgsl from './shaders/sprite.wgsl?raw';
 import blitWgsl from './shaders/blit.wgsl?raw';
+import easuWgsl from './shaders/easu.wgsl?raw';
+import rcasWgsl from './shaders/rcas.wgsl?raw';
 import lightLib from './shaders/light.wgsl?raw';
 import lightingWgsl from './shaders/lighting.wgsl?raw';
 import { LIGHT_PARAMS_BYTES, MAX_LIGHTS, packLightParams, type LightingState } from './lighting';
@@ -12,6 +14,9 @@ import { surfaceWgslConstants } from './surface';
 import { ShelfPacker, type AtlasRect } from './atlas';
 import { BLEND_ID, INSTANCE_BYTES, type BlendMode, DrawList } from './drawlist';
 import { requestGpu, type GpuContext } from './device';
+import { fitRect, type Rect } from './fit';
+import { DEFAULT_PRESENT_MODE, DEFAULT_SHARPNESS, PARAMS_FLOATS, clampSharpness, easuConstants, packParams, planPresent, type PresentMode, type PresentPass } from './fsr';
+import { GpuTimer } from './timer';
 import type { Camera } from '../world/camera';
 
 /** Atlas edge: the device's 2D texture limit, capped (r8uint: 8192^2 = 64 MiB). */
@@ -36,13 +41,26 @@ const BLEND_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const SHADER_PREFIX = surfaceWgslConstants(MAX_LIGHTS) + lightLib;
 const DEFAULT_LIGHTING: LightingState = { mode: 'off', ambient: 1, lights: [] };
 
-/** Compute the destination rect for fitting src into dst: integer scale when >= 1, else fractional fit. */
-export function fitRect(srcW: number, srcH: number, dstW: number, dstH: number): { x: number; y: number; w: number; h: number } {
-  const f = Math.min(dstW / srcW, dstH / srcH);
-  const s = f >= 1 ? Math.floor(f) : f;
-  const w = Math.max(1, Math.floor(srcW * s));
-  const h = Math.max(1, Math.floor(srcH * s));
-  return { x: Math.floor((dstW - w) / 2), y: Math.floor((dstH - h) / 2), w, h };
+export { fitRect };
+
+/** Source texture bind groups for the presentation passes. */
+interface SrcBinds {
+  nearest: GPUBindGroup;
+  linear: GPUBindGroup;
+  easu: GPUBindGroup;
+}
+
+/** What the last presentation did (debug panel, tests). */
+export interface PresentInfo {
+  mode: PresentMode;
+  pass: PresentPass;
+  srcW: number;
+  srcH: number;
+  canvasW: number;
+  canvasH: number;
+  rect: Rect;
+  /** GPU time of the EASU + RCAS passes, ms (null: no timestamp-query feature, or no EASU this frame) */
+  gpuMs: number | null;
 }
 
 export class Renderer {
@@ -77,11 +95,23 @@ export class Renderer {
   private readonly gAttachments: GPURenderPassColorAttachment[];
   private readonly viewUniform: GPUBuffer;
   private readonly spriteBind: GPUBindGroup;
-  private readonly blitBind: GPUBindGroup;
+  private sceneBinds!: SrcBinds;
+  private readonly linearSampler: GPUSampler;
+  private readonly easuBgl: GPUBindGroupLayout;
+  private readonly easuPipeline: GPURenderPipeline;
+  private readonly rcasPipeline: GPURenderPipeline;
+  private readonly paramsBuf: GPUBuffer;
+  private readonly paramsData = new Float32Array(PARAMS_FLOATS);
+  private easuTex: GPUTexture | null = null;
+  private rcasBind: GPUBindGroup | null = null;
+  private readonly timer: GpuTimer | null;
+  presentMode: PresentMode = DEFAULT_PRESENT_MODE;
+  sharpness = DEFAULT_SHARPNESS;
+  lastPresent: PresentInfo | null = null;
   private readonly blitBgl: GPUBindGroupLayout;
   private readonly blitSampler: GPUSampler;
   private frameTex: GPUTexture | null = null;
-  private frameBind: GPUBindGroup | null = null;
+  private frameBinds: SrcBinds | null = null;
   private frameW = 0;
   private frameH = 0;
   /** where the last presented RGBA frame sits on the canvas (canvas device pixels) */
@@ -289,13 +319,33 @@ export class Renderer {
     });
     this.blitBgl = blitBgl;
     this.blitSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' });
-    this.blitBind = device.createBindGroup({
-      layout: blitBgl,
+    this.linearSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    this.easuBgl = device.createBindGroupLayout({
       entries: [
-        { binding: 0, resource: this.sceneView },
-        { binding: 1, resource: this.blitSampler },
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     });
+    const easuLayout = device.createPipelineLayout({ bindGroupLayouts: [this.easuBgl] });
+    const easuModule = device.createShaderModule({ label: 'easu', code: easuWgsl });
+    const rcasModule = device.createShaderModule({ label: 'rcas', code: rcasWgsl });
+    this.easuPipeline = device.createRenderPipeline({
+      label: 'easu',
+      layout: easuLayout,
+      vertex: { module: easuModule, entryPoint: 'vs' },
+      fragment: { module: easuModule, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.rcasPipeline = device.createRenderPipeline({
+      label: 'rcas',
+      layout: easuLayout,
+      vertex: { module: rcasModule, entryPoint: 'vs' },
+      fragment: { module: rcasModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    this.paramsBuf = device.createBuffer({ label: 'present-params', size: PARAMS_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 2) : null;
+    this.sceneBinds = this.makeBinds(this.sceneView);
     device.addEventListener?.('uncapturederror', (e) => {
       console.error('WebGPU uncaptured error:', (e as GPUUncapturedErrorEvent).error.message);
     });
@@ -358,15 +408,91 @@ export class Renderer {
     this.lighting = l;
   }
 
-  /** Match canvas backing store to its CSS size. */
+  /** Presentation: FSR1 (EASU + RCAS), nearest (integer scale) or bilinear; RCAS sharpness in stops (0 sharpest .. 2). */
+  setPresent(mode: PresentMode, sharpness: number = this.sharpness): void {
+    this.presentMode = mode;
+    this.sharpness = clampSharpness(sharpness);
+  }
+
+  /** Match the canvas backing store to its CSS size at the device pixel ratio. */
   resizeToDisplay(): void {
     const dpr = window.devicePixelRatio || 1;
-    const w = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
-    const h = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+    const max = this.device.limits.maxTextureDimension2D;
+    const w = Math.min(max, Math.max(1, Math.round(this.canvas.clientWidth * dpr)));
+    const h = Math.min(max, Math.max(1, Math.round(this.canvas.clientHeight * dpr)));
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
     }
+  }
+
+  private makeBinds(view: GPUTextureView): SrcBinds {
+    const bg = (sampler: GPUSampler) =>
+      this.device.createBindGroup({ layout: this.blitBgl, entries: [{ binding: 0, resource: view }, { binding: 1, resource: sampler }] });
+    return {
+      nearest: bg(this.blitSampler),
+      linear: bg(this.linearSampler),
+      easu: this.device.createBindGroup({ layout: this.easuBgl, entries: [{ binding: 0, resource: { buffer: this.paramsBuf } }, { binding: 1, resource: view }] }),
+    };
+  }
+
+  /** Encode the passes that show a srcW x srcH texture on the canvas in the current presentation mode. */
+  private encodePresent(enc: GPUCommandEncoder, binds: SrcBinds, srcW: number, srcH: number): void {
+    this.resizeToDisplay();
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const plan = planPresent(this.presentMode, srcW, srcH, cw, ch);
+    const r = plan.rect;
+    this.lastRect = r;
+    const target = this.ctx.getCurrentTexture().createView();
+    const clear = { r: 0.02, g: 0.02, b: 0.025, a: 1 };
+    let gpuMs: number | null = null;
+    if (plan.pass === 'easu-rcas') {
+      if (!this.easuTex || this.easuTex.width !== r.w || this.easuTex.height !== r.h) {
+        this.easuTex?.destroy();
+        this.easuTex = this.device.createTexture({
+          label: 'easu-out',
+          size: [r.w, r.h],
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        });
+        this.rcasBind = this.device.createBindGroup({
+          layout: this.easuBgl,
+          entries: [{ binding: 0, resource: { buffer: this.paramsBuf } }, { binding: 1, resource: this.easuTex.createView() }],
+        });
+      }
+      this.device.queue.writeBuffer(this.paramsBuf, 0, packParams(this.paramsData, easuConstants(srcW, srcH, srcW, srcH, r.w, r.h), this.sharpness, r) as Float32Array<ArrayBuffer>);
+      const timed = this.timer?.begin() ?? false;
+      const easu = enc.beginRenderPass({
+        colorAttachments: [{ view: this.easuTex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+        ...(timed ? { timestampWrites: this.timer!.writes() } : {}),
+      });
+      easu.setPipeline(this.easuPipeline);
+      easu.setBindGroup(0, binds.easu);
+      easu.draw(3);
+      easu.end();
+      const rcas = enc.beginRenderPass({
+        colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: clear }],
+        ...(timed ? { timestampWrites: this.timer!.writes() } : {}),
+      });
+      rcas.setViewport(r.x, r.y, r.w, r.h, 0, 1);
+      rcas.setScissorRect(r.x, r.y, r.w, r.h);
+      rcas.setPipeline(this.rcasPipeline);
+      rcas.setBindGroup(0, this.rcasBind!);
+      rcas.draw(3);
+      rcas.end();
+      if (timed) this.timer!.finish(enc);
+      gpuMs = this.timer ? this.timer.avgMs : null;
+    } else {
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: clear }] });
+      pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
+      pass.setScissorRect(r.x, r.y, r.w, r.h);
+      pass.setPipeline(this.blitPipeline);
+      pass.setBindGroup(0, plan.pass === 'nearest' ? binds.nearest : binds.linear);
+      pass.draw(3);
+      pass.end();
+    }
+    this.lastPresent = { mode: this.presentMode, pass: plan.pass, srcW, srcH, canvasW: cw, canvasH: ch, rect: r, gpuMs };
   }
 
   render(list: DrawList, camera: Camera): void {
@@ -419,32 +545,13 @@ export class Renderer {
     lightPass.draw(3);
     lightPass.end();
 
-    this.resizeToDisplay();
-    const cw = this.canvas.width;
-    const ch = this.canvas.height;
-    const blitPass = enc.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.ctx.getCurrentTexture().createView(),
-          clearValue: { r: 0.05, g: 0.05, b: 0.06, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    const r = fitRect(this.sceneW, this.sceneH, cw, ch);
-    blitPass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
-    blitPass.setScissorRect(r.x, r.y, r.w, r.h);
-    blitPass.setPipeline(this.blitPipeline);
-    blitPass.setBindGroup(0, this.blitBind);
-    blitPass.draw(3);
-    blitPass.end();
+    this.encodePresent(enc, this.sceneBinds, this.sceneW, this.sceneH);
     device.queue.submit([enc.finish()]);
   }
 
   /**
    * Show a finished RGBA frame (the full game's CPU framebuffer, any width, e.g. widescreen) through the same
-   * nearest blit as the scene: upload to an rgba8unorm texture, integer-scale letterbox onto the canvas.
+   * presentation path as the scene (FSR1 / nearest / bilinear): upload to an rgba8unorm texture.
    */
   presentRgba(width: number, height: number, rgba: Uint8Array): void {
     if (rgba.length < width * height * 4) throw new Error('presentRgba: pixel buffer too small');
@@ -457,13 +564,7 @@ export class Renderer {
         format: 'rgba8unorm',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
-      this.frameBind = device.createBindGroup({
-        layout: this.blitBgl,
-        entries: [
-          { binding: 0, resource: this.frameTex.createView() },
-          { binding: 1, resource: this.blitSampler },
-        ],
-      });
+      this.frameBinds = this.makeBinds(this.frameTex.createView());
       this.frameW = width;
       this.frameH = height;
     }
@@ -473,21 +574,8 @@ export class Renderer {
       { bytesPerRow: width * 4, rowsPerImage: height },
       [width, height],
     );
-    this.resizeToDisplay();
-    const r = fitRect(width, height, this.canvas.width, this.canvas.height);
-    this.lastRect = r;
     const enc = device.createCommandEncoder();
-    const pass = enc.beginRenderPass({
-      colorAttachments: [
-        { view: this.ctx.getCurrentTexture().createView(), clearValue: { r: 0.05, g: 0.05, b: 0.06, a: 1 }, loadOp: 'clear', storeOp: 'store' },
-      ],
-    });
-    pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
-    pass.setScissorRect(r.x, r.y, r.w, r.h);
-    pass.setPipeline(this.blitPipeline);
-    pass.setBindGroup(0, this.frameBind);
-    pass.draw(3);
-    pass.end();
+    this.encodePresent(enc, this.frameBinds!, width, height);
     device.queue.submit([enc.finish()]);
   }
 }

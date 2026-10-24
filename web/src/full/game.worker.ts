@@ -34,6 +34,7 @@ interface D2WebState {
   present: null;
   pool: FramePool;
   audio: AudioBridge;
+  viewW: number;
   ctl: { queue: { id: number; line: string }[]; reply(id: number, text: string): void };
   /** called by d2web_saved(): a character file was just written */
   onSaved(): void;
@@ -53,11 +54,20 @@ let syncAgain = false;
 let readOnly = false;
 let exited = false;
 let syncs = 0;
+/** the periodic IndexedDB write; cleared when the game exits or is stopped */
+let syncTimer: ReturnType<typeof setInterval> | null = null;
+/** the final write is done: nothing may touch the (possibly torn down) user dir again */
+let closed = false;
+
+function stopSyncTimer(): void {
+  if (syncTimer !== null) clearInterval(syncTimer);
+  syncTimer = null;
+}
 
 /** FS.syncfs(false); calls never overlap: one requested while another runs is repeated right after it. */
 function flushUserDir(): Promise<void> {
   const m = mod;
-  if (!m || readOnly) return Promise.resolve();
+  if (!m || readOnly || closed) return Promise.resolve();
   if (syncing) {
     syncAgain = true;
     return Promise.resolve();
@@ -77,7 +87,7 @@ function flushUserDir(): Promise<void> {
   });
 }
 
-async function start(files: File[], baseUrl: string, extraArgs: string[]): Promise<void> {
+async function start(files: File[], baseUrl: string, extraArgs: string[], viewWidth: number): Promise<void> {
   const t0 = performance.now();
   post({ t: 'status', text: 'loading game code...' });
   const pool = new FramePool((m, t) => {
@@ -93,6 +103,7 @@ async function start(files: File[], baseUrl: string, extraArgs: string[]): Promi
     present: null,
     pool,
     audio,
+    viewW: viewWidth,
     ctl: { queue: [], reply: (id, text) => post({ t: 'ctlReply', id, text }) },
     onSaved: () => void flushUserDir(),
   };
@@ -119,10 +130,12 @@ async function start(files: File[], baseUrl: string, extraArgs: string[]): Promi
     onAbort: (what: unknown) => post({ t: 'error', message: `game aborted: ${String(what)}` }),
     onExit: (code: number) => {
       exited = true;
+      stopSyncTimer();
       // quit-time saves reach IndexedDB before the page hears about the exit
-      void flushUserDir()
+      void finalFlush()
         .then(() => settle())
         .then(() => {
+          closed = true;
           post({ t: 'exit', code });
           post({ t: 'flushed' });
         });
@@ -139,14 +152,14 @@ async function start(files: File[], baseUrl: string, extraArgs: string[]): Promi
       res();
     }),
   );
-  setInterval(() => void flushUserDir(), 10_000);
+  syncTimer = setInterval(() => void flushUserDir(), 10_000);
   post({ t: 'status', text: 'loading Diablo II data (the game is blocked while it loads)...' });
   // yield once so the status message is delivered before main() blocks the worker for a while
   await new Promise((r) => setTimeout(r, 20));
   // JSPI: main() suspends inside the frame loop, so callMain returns a promise that settles when it exits
   const isExit = (e: unknown) => e === 'unwind' || (e instanceof Error && e.name === 'ExitStatus') || (typeof e === 'object' && e !== null && (e as { name?: string }).name === 'ExitStatus');
   try {
-    await Promise.resolve(m.callMain(['--data', '/d2', '--no-video', ...extraArgs]));
+    await Promise.resolve(m.callMain(['--data', '/d2', '--no-video', '--widescreen', ...extraArgs]));
   } catch (e) {
     if (!isExit(e)) post({ t: 'error', message: describe(m, e) });
   }
@@ -165,6 +178,20 @@ function describe(m: D2Module, e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * The last write, after the game has exited. A write that was already running when the runtime exited (the quit-time
+ * character save starts one) never completes: IDBFS' callbacks die with the runtime. Wait a moment for it, then give up on
+ * it and write again from scratch, so the saved character always reaches IndexedDB.
+ */
+async function finalFlush(): Promise<void> {
+  for (let i = 0; i < 60 && (syncing || syncAgain); i++) await new Promise((r) => setTimeout(r, 25));
+  if (syncing) {
+    syncing = false;
+    syncAgain = false;
+  }
+  await flushUserDir();
+}
+
 /** Resolves once no IndexedDB write is running or queued. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 200 && (syncing || syncAgain); i++) await new Promise((r) => setTimeout(r, 25));
@@ -172,17 +199,23 @@ async function settle(): Promise<void> {
 
 /** Page asked to stop: quit the game (it saves), write IndexedDB, say so. Falls back after a few seconds. */
 function stop(): void {
-  if (!state) {
-    post({ t: 'flushed' });
+  if (!state || exited) {
+    // never started, or the game already quit and wrote its saves: nothing to wait for
+    stopSyncTimer();
+    void settle().then(() => post({ t: 'flushed' })); // returns at once unless the exit-time write is still running
     return;
   }
   state.pool.want = 2; // a paused (hidden) game must run to see the quit
   state.events.push([7, 0, 0, 0, 0, 0]);
   setTimeout(() => {
     if (exited) return;
+    stopSyncTimer();
     void flushUserDir()
       .then(() => settle())
-      .then(() => post({ t: 'flushed' }));
+      .then(() => {
+        closed = true;
+        post({ t: 'flushed' });
+      });
   }, 4000);
 }
 
@@ -193,7 +226,10 @@ ctx.onmessage = (e) => {
   const msg = e.data;
   switch (msg.t) {
     case 'start':
-      start(msg.files, msg.baseUrl, msg.args ?? []).catch((err: unknown) => post({ t: 'error', message: err instanceof Error ? `${err.message}` : String(err) }));
+      start(msg.files, msg.baseUrl, msg.args ?? [], msg.viewWidth ?? 800).catch((err: unknown) => post({ t: 'error', message: err instanceof Error ? `${err.message}` : String(err) }));
+      break;
+    case 'view':
+      if (state) state.viewW = msg.width;
       break;
     case 'input':
       if (state) for (const r of msg.recs) state.events.push(r);

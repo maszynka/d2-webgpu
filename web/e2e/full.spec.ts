@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { PNG } from 'pngjs';
 import { cam, click, ctl, gameState, moveTo, mpqDir, openAndPlay, perf, perfReset, shot, shots, shownFrames, stats, waitState } from './fullhelpers';
 
 test.skip(!mpqDir, 'set D2_MPQ_DIR to run against real game files');
@@ -17,7 +18,7 @@ test.setTimeout(10 * 60_000);
 function watch(page: Page): string[] {
   const errors: string[] = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}\n${(e.stack ?? '').split('\n').slice(0, 6).join('\n')}`));
   page.on('console', (m) => {
     if (m.type() === 'debug' && m.text().startsWith('[d2]')) process.stdout.write(`${m.text()}\n`);
   });
@@ -210,4 +211,173 @@ test('full game F2: new character, camp, walking, Blood Moor, fight, save, reloa
   console.log(`after reload: ${sel['saves']} saves, name=${sel['name']}`);
   expect(Number(sel['saves'])).toBeGreaterThanOrEqual(1);
   await shot(page, 'f2-reloaded-select.png');
+});
+
+/** mean absolute difference between neighbouring pixels (luma): a crude sharpness / edge-energy figure */
+function edgeEnergy(buf: Buffer): number {
+  const png = PNG.sync.read(buf);
+  const w = png.width;
+  const luma = (i: number) => 0.3 * (png.data[i] ?? 0) + 0.59 * (png.data[i + 1] ?? 0) + 0.11 * (png.data[i + 2] ?? 0);
+  let sum = 0;
+  let n = 0;
+  for (let y = 0; y < png.height - 1; y += 2) {
+    for (let x = 0; x < w - 1; x += 2) {
+      const i = (y * w + x) * 4;
+      sum += Math.abs(luma(i) - luma(i + 4)) + Math.abs(luma(i) - luma(i + w * 4));
+      n += 2;
+    }
+  }
+  return sum / n;
+}
+
+test('resolution: the in-game view is wider than 800 and follows the window, shown with FSR1 and nearest', async ({ page }) => {
+  const errors = watch(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openAndPlay(page);
+  // the menus stay 800x600 (letterboxed); the request already follows the canvas
+  const menu = await page.evaluate(() => ({ w: window.__d2!.full!.width, ask: window.__d2!.full!.viewWidth, p: window.__d2!.present }));
+  console.log(`menu: frame ${menu.w}, asked ${menu.ask}, present ${JSON.stringify(menu.p?.pass)} ${menu.p?.rect.w}x${menu.p?.rect.h} on ${menu.p?.canvasW}x${menu.p?.canvasH}`);
+  expect(menu.w).toBe(800);
+  expect(menu.ask).toBeGreaterThan(800);
+  expect(menu.p?.pass).toBe('easu-rcas');
+
+  await page.waitForTimeout(1500);
+  await newCharacter(page, 'Wide');
+  await page.waitForTimeout(3000);
+  const wide = await page.evaluate(() => ({ w: window.__d2!.full!.width, h: window.__d2!.full!.height, ask: window.__d2!.full!.viewWidth }));
+  console.log(`in game: native ${wide.w}x${wide.h}, asked ${wide.ask}`);
+  expect(wide.w).toBeGreaterThan(800);
+  expect(wide.w).toBe(wide.ask);
+  expect(wide.h).toBe(600);
+
+  // the camp, FSR1 and nearest (sharp = RCAS default 0.2)
+  const fsr = await shot(page, 'res-camp-fsr1.png');
+  const info = await page.evaluate(() => window.__d2!.present);
+  console.log(`FSR1: ${info?.srcW}x${info?.srcH} -> ${info?.rect.w}x${info?.rect.h} on canvas ${info?.canvasW}x${info?.canvasH}, gpu ${info?.gpuMs?.toFixed(2)} ms`);
+  await page.selectOption('#present', 'bilinear');
+  await page.waitForTimeout(500);
+  const bil = await shot(page, 'res-camp-bilinear.png');
+  await page.selectOption('#present', 'nearest');
+  await page.waitForTimeout(500);
+  const near = await shot(page, 'res-camp-nearest.png');
+  const ef = edgeEnergy(fsr);
+  const eb = edgeEnergy(bil);
+  const en = edgeEnergy(near);
+  console.log(`edge energy (sharpness): fsr1 ${ef.toFixed(2)}, bilinear ${eb.toFixed(2)}, nearest ${en.toFixed(2)}`);
+  expect(ef).toBeGreaterThan(eb); // EASU+RCAS is sharper than bilinear
+  expect(fsr.equals(near)).toBe(false);
+  await page.selectOption('#present', 'fsr1');
+
+  // a resize recomputes the view width (aspect 1000x700 is narrower than 1600x900's canvas)
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.viewWidth), { timeout: 10_000 }).toBeLessThan(wide.ask);
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.width), { timeout: 10_000 }).toBeLessThan(wide.w);
+  const narrow = await page.evaluate(() => ({ w: window.__d2!.full!.width, ask: window.__d2!.full!.viewWidth }));
+  console.log(`after resize to 1000x900: native ${narrow.w}, asked ${narrow.ask}`);
+  await shot(page, 'res-camp-narrow.png');
+  // clicks still land where the frame was drawn: walk
+  const p0 = cam(await gameState(page));
+  await click(page, 560, 360, 1800);
+  expect(dist(p0, cam(await gameState(page)))).toBeGreaterThan(1);
+  expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
+});
+
+async function pageShot(page: Page, name: string): Promise<void> {
+  fs.mkdirSync(shots, { recursive: true });
+  await page.screenshot({ path: path.join(shots, name) });
+}
+
+test('ui: autoplay on pick, the page becomes the game, the bar hides and returns, native width follows the page', async ({ page }) => {
+  const errors = watch(page);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.addInitScript(() => {
+    // headless fullscreen is emulated (element + event) so the Esc / Alt+Enter paths can be exercised
+    const w = window as unknown as { __fsEl: Element | null };
+    w.__fsEl = null;
+    Object.defineProperty(document, 'fullscreenElement', { get: () => w.__fsEl, configurable: true });
+    Element.prototype.requestFullscreen = function (this: Element) {
+      w.__fsEl = this;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    };
+    document.exitFullscreen = () => {
+      w.__fsEl = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    };
+  });
+  await openAndPlay(page);
+  // autoplay: no Play click was needed
+  expect(await page.evaluate(() => window.__d2?.mode)).toBe('full');
+  expect(await page.evaluate(() => document.body.classList.contains('playing'))).toBe(true);
+  const box = (await page.locator('canvas#view').boundingBox())!;
+  expect(box).toMatchObject({ x: 0, y: 0, width: 1920, height: 1080 });
+  await page.mouse.move(900, 500);
+  await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar), { timeout: 8000 }).toBe('overlay-hidden');
+  await page.waitForTimeout(1500);
+  await pageShot(page, 'res-play-bar-hidden-1920x1080.png');
+  await page.mouse.move(900, 1);
+  await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar), { timeout: 3000 }).toBe('overlay-visible');
+  await pageShot(page, 'res-play-bar-revealed.png');
+  await page.mouse.move(900, 500);
+  await page.keyboard.press('F9');
+  await page.waitForTimeout(1200);
+  await pageShot(page, 'res-play-debug.png');
+  await page.keyboard.press('F9');
+
+  await newCharacter(page, 'Ui');
+  await page.waitForTimeout(3000);
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.width), { timeout: 10_000 }).toBe(1066);
+  expect(await page.evaluate(() => window.__d2!.full!.height)).toBe(600);
+  await pageShot(page, 'res-play-camp-1920x1080.png');
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.width), { timeout: 10_000 }).toBe(800);
+  await page.setViewportSize({ width: 2560, height: 1080 });
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.width), { timeout: 10_000 }).toBe(1400);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect.poll(() => page.evaluate(() => window.__d2!.full!.width), { timeout: 10_000 }).toBe(1066);
+
+  // fullscreen while playing: Esc still reaches the game menu; Alt+Enter leaves
+  await page.keyboard.press('Alt+Enter');
+  await expect.poll(() => page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(true);
+  await page.locator('canvas#view').focus();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(700);
+  expect((await gameState(page))['gamemenu']).toMatch(/^[1-9]/);
+  expect(await page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(true);
+  await page.keyboard.press('Escape'); // close the menu again
+  await page.waitForTimeout(500);
+  await page.keyboard.press('Alt+Enter');
+  await expect.poll(() => page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(false);
+
+  // a worker failure: the card, the bar stays up, Restart brings the game back
+  await page.evaluate(() => (window.__d2!.fullGame as unknown as { fail(m: string): void })['fail']('boom'));
+  await expect(page.locator('#game-failed')).toBeVisible();
+  await expect(page.locator('#game-failed-reason')).toContainText('boom');
+  expect(await page.evaluate(() => window.__d2?.ui?.bar)).toBe('overlay-visible');
+  await pageShot(page, 'res-play-failed-card.png');
+  await page.click('#game-restart');
+  await expect(page.locator('#game-failed')).toBeHidden();
+  await page.waitForFunction(() => window.__d2?.mode === 'full' && (window.__d2?.full?.shown ?? 0) > 5, undefined, { timeout: 240_000 });
+
+  // back to the demo from the mode select
+  await page.selectOption('#mode', 'demo');
+  await expect.poll(() => page.evaluate(() => window.__d2?.mode), { timeout: 20_000 }).toBe('demo');
+  expect(await page.evaluate(() => document.body.classList.contains('playing'))).toBe(false);
+  expect(await page.evaluate(() => window.__d2?.ui?.bar)).toBe('inflow');
+  await expect(page.locator('#game-status')).toContainText('Game stopped');
+  // the IndexedDB error is the quit-time sync that dies with the exited runtime, reported when its worker is terminated
+  expect(errors.filter((e) => !/favicon|404|boom|IDBDatabase.*closing/i.test(e))).toEqual([]);
+});
+
+test('optional archives: without sound and video archives the game still runs', async ({ page }) => {
+  const errors = watch(page);
+  await openAndPlay(page, /^(d2data|d2exp|d2char|patch_d2)\.mpq$/i);
+  await expect(page.locator('#game-failed')).toBeHidden();
+  const before = await shownFrames(page);
+  await page.waitForTimeout(2000);
+  expect(await shownFrames(page)).toBeGreaterThan(before + 5);
+  await shot(page, 'res-title-no-sound-archives.png');
+  expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
 });

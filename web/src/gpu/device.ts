@@ -23,7 +23,8 @@ export async function requestGpu(): Promise<GpuContext> {
   if (!hasWebGPU()) throw new Error('navigator.gpu is not available');
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error('No WebGPU adapter available');
-  const device = await adapter.requestDevice();
+  // timestamp queries time the presentation passes (debug panel); optional
+  const device = await adapter.requestDevice({ requiredFeatures: adapter.features.has('timestamp-query') ? (['timestamp-query'] as GPUFeatureName[]) : [] });
   const ai = adapter.info;
   const info: AdapterSummary = {
     vendor: ai.vendor,
