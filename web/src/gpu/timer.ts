@@ -34,7 +34,8 @@ export class GpuTimer {
 
   /** timestampWrites for the next timed pass of this frame (call only when begin() returned true). */
   writes(): GPURenderPassTimestampWrites {
-    const i = Math.min(this.used++, this.spans - 1);
+    // past capacity the last span is reused, so finish() never resolves more queries than exist
+    const i = this.used < this.spans ? this.used++ : this.spans - 1;
     return { querySet: this.qs, beginningOfPassWriteIndex: i * 2, endOfPassWriteIndex: i * 2 + 1 };
   }
 
