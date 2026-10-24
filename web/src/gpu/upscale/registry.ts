@@ -41,6 +41,12 @@ export function markStageFailed(mode: string): void {
   for (const l of listeners) l();
 }
 
+/** Make a failed mode selectable again (the renderer retries an async factory after a back-off). */
+export function clearStageFailed(mode: string): void {
+  if (!failed.delete(mode)) return;
+  for (const l of listeners) l();
+}
+
 /** The renderer reports a mode whose async factory is in flight (the UI shows "loading\u2026"). */
 export function setStageLoading(mode: string, on: boolean): void {
   if (on === loading.has(mode)) return;

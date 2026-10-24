@@ -15,7 +15,7 @@ import downsampleWgsl from './shaders/downsample.wgsl?raw';
 import { planCompare } from './compare';
 import { DEFAULT_DENSITY, densitySize, effectiveDpr, type Density } from './density';
 import { StageResample, type ResampleDeps } from './resample';
-import { createStage, markStageFailed, setStageLoading } from './upscale/registry';
+import { clearStageFailed, createStage, markStageFailed, setStageLoading } from './upscale/registry';
 import type { UpscaleStage } from './upscale/stage';
 import { DEFAULT_UI_SCALER, maskKey, planMask, rasterizeMask, sharpPrescale, type MaskKind, type UiScaler } from './uimask';
 import type { UiInfo } from '../full/uitrailer';
@@ -44,6 +44,7 @@ export interface RendererOptions {
   height?: number;
 }
 
+const STAGE_RETRY_MS = 30_000; // a failed async stage (weights fetch) becomes selectable again after this
 const SCENE_FORMAT: GPUTextureFormat = 'rgba8unorm';
 const INDEX_FORMAT: GPUTextureFormat = 'rg8uint'; // palette index, palette row
 const AUX_FORMAT: GPUTextureFormat = 'r8uint';
@@ -519,7 +520,7 @@ export class Renderer {
     } catch {
       /* no device-pixel-content-box: client size * dpr below */
     }
-    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 16) : null;
+    this.timer = device.features.has('timestamp-query') ? new GpuTimer(device, 32) : null;
     this.sceneBinds = this.makeBinds(this.sceneView);
     device.addEventListener?.('uncapturederror', (e) => {
       console.error('WebGPU uncaptured error:', (e as GPUUncapturedErrorEvent).error.message);
@@ -738,6 +739,7 @@ export class Renderer {
     this.frameTex = null;
     for (const st of this.stages.values()) st.destroy();
     this.stages.clear();
+    for (const st of this.deadStages.splice(0)) st.destroy();
     for (const rs of this.resamplers.values()) rs.destroy();
     this.resamplers.clear();
     if (this.maskTex) this.killTex(this.maskTex);
@@ -774,6 +776,8 @@ export class Renderer {
     this.presentDirty = true;
   }
   private readonly pendingStages = new Set<string>();
+  /** Stages whose encode threw: destroyed at the next present, after the frame that recorded their passes was submitted. */
+  private readonly deadStages: UpscaleStage[] = [];
   private disposed = false;
 
   /** The live stage for a concrete mode, or false while an async factory is still building it (presentDirty on resolve). */
@@ -808,6 +812,7 @@ export class Renderer {
         this.presentDirty = true;
         markStageFailed(mode);
         setStageLoading(mode, false);
+        setTimeout(() => clearStageFailed(mode), STAGE_RETRY_MS); // e.g. a failed weights fetch: offer it again later
       },
     );
     return false;
@@ -849,6 +854,7 @@ export class Renderer {
 
   /** Encode the passes that show a srcW x srcH texture on the canvas in the current presentation mode. */
   private encodePresent(enc: GPUCommandEncoder, binds: SrcBinds, srcW: number, srcH: number): void {
+    for (const st of this.deadStages.splice(0)) st.destroy();
     this.resizeToDisplay();
     this.presentDirty = false;
     this.lastSrc = { binds, w: srcW, h: srcH };
@@ -941,7 +947,8 @@ export class Renderer {
       } catch (e) {
         console.error(`upscale stage ${mode} failed:`, e);
         markStageFailed(mode);
-        this.stages.get(mode)?.destroy();
+        const dead = this.stages.get(mode);
+        if (dead) this.deadStages.push(dead); // passes already recorded into enc may reference its textures
         this.stages.delete(mode);
         this.presentDirty = true; // next present falls back to FSR1
       }

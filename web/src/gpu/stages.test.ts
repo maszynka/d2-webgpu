@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { comparePass, planCompare } from './compare';
 import { PRESENT_MODES, modeAvailable, parsePresentMode, planPresent } from './fsr';
 import { resampleKind } from './resample';
-import { SMOOTH_SCALEFX_MIN_SCALE, registerStage, resetStagesForTests, resolveStageMode, stageAvailable, unregisterStage } from './upscale/registry';
+import { SMOOTH_SCALEFX_MIN_SCALE, clearStageFailed, markStageFailed, registerStage, resetStagesForTests, resolveStageMode, stageAvailable, unregisterStage } from './upscale/registry';
 import type { UpscaleStage } from './upscale/stage';
 
 const fake = (): UpscaleStage => ({ ratio: 2, passes: 1, encode: () => ({ view: {} as GPUTextureView, width: 0, height: 0 }), liveTextures: () => 0, destroy: () => undefined });
@@ -51,6 +51,16 @@ describe('stage modes with registered stages', () => {
     expect(planPresent('smooth-sxbr', 1066, 600, 800, 450).pass).toBe('bilinear');
     unregisterStage('smooth-sxbr');
     expect(stageAvailable('smooth')).toBe(false);
+  });
+
+  it('a failed stage falls back until cleared (the renderer retries a failed load after a back-off)', () => {
+    registerStage('fsrcnnx', fake);
+    markStageFailed('fsrcnnx');
+    expect(stageAvailable('fsrcnnx')).toBe(false);
+    expect(planPresent('fsrcnnx', 1066, 600, 3200, 1800).pass).toBe('easu-rcas');
+    clearStageFailed('fsrcnnx');
+    expect(stageAvailable('fsrcnnx')).toBe(true);
+    expect(planPresent('fsrcnnx', 1066, 600, 3200, 1800)).toMatchObject({ pass: 'stage', stage: 'fsrcnnx' });
   });
 
   it('compare plans carry the stage per side', () => {

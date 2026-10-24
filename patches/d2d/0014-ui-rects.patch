@@ -130,7 +130,7 @@ diff -ru a/components/font/font.hpp b/components/font/font.hpp
              x += glyph->width;
          }
 +#ifdef D2WEB
-+        d2web::ui_note(note_x, y, x - note_x, line_height_);
++        { const int ny0 = std::max(int(y), clip_y0), ny1 = std::min(int(y) + int(line_height_), clip_y1); if (ny1 > ny0) d2web::ui_note(note_x, ny0, x - note_x, ny1 - ny0); }   // only the rows the clip let through
 +#endif
          return x;
      }
