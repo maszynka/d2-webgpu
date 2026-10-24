@@ -146,8 +146,8 @@ export class Panel {
         if (e.key === 'Escape') {
           e.stopPropagation();
           this.closePopovers();
-          // in play the game gets the keys back; otherwise focus returns to the trigger
-          if (this.isPlaying) this.onDismiss();
+          // over the game (overlay bar) the keys go back to the surface; otherwise focus returns to the trigger
+          if (this.dismissToSurface()) this.onDismiss();
           else (pop === this.tools ? this.toolsBtn : this.brand).focus();
         }
       });
@@ -206,6 +206,8 @@ export class Panel {
   onPopover: () => void = () => undefined;
   /** A popover was dismissed during play (Escape / pointer outside): give the keyboard back to the game. */
   onDismiss: () => void = () => undefined;
+  /** True while the bar floats over the surface (play or fullscreen): Escape must not leave focus in the bar. */
+  dismissToSurface: () => boolean = () => this.isPlaying;
 
   // --- state ----------------------------------------------------------------
 

@@ -121,8 +121,15 @@ async function main(): Promise<void> {
     if (!panel.popoverOpen) releaseBarFocus();
   };
   panel.onDismiss = () => {
-    if (full) canvas.focus({ preventScroll: true });
+    releaseBarFocus();
+    bar.armHide();
   };
+  panel.dismissToSurface = () => bar.state !== 'inflow';
+  // Escape on a select (popup cancelled, no change event) gives the keys back to the game
+  for (const id of ['mode', 'present'])
+    $<HTMLSelectElement>(id).addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !panel.popoverOpen) requestAnimationFrame(releaseBarFocus);
+    });
   // a pointer press outside the bar dismisses its popovers, so they never pin the bar over the game
   window.addEventListener(
     'pointerdown',
@@ -269,6 +276,8 @@ async function main(): Promise<void> {
         if (bar.state === 'overlay-visible') {
           panel.closePopovers();
           bar.hideNow();
+          // closing a popover that held focus already dropped it to body, so onHidden may not have fired
+          if (full) canvas.focus({ preventScroll: true });
         } else {
           bar.reveal();
           $<HTMLSelectElement>('mode').focus();

@@ -18,6 +18,8 @@ export class Bar {
   onHidden: () => void = () => undefined;
   /** The pointer left the bar with focus still in it (a select/slider just used): hand focus back to the game. */
   onPointerLeft: () => void = () => undefined;
+  /** The last pointerleave was a native <select> popup opening (or the pointer leaving the window): release on the next move outside. */
+  private selectPending = false;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private edgeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -30,13 +32,15 @@ export class Bar {
   ) {
     bar.addEventListener('pointerenter', () => {
       this.hovering = true;
+      this.selectPending = false;
       this.clearHide();
     });
     bar.addEventListener('pointerleave', (e) => {
       this.hovering = false;
       // a native <select> popup opening also fires pointerleave (relatedTarget null): leave its focus alone
       const selectOpen = e.relatedTarget === null && document.activeElement instanceof HTMLSelectElement;
-      if (this.overlay && this.focusInside() && !selectOpen) this.onPointerLeft();
+      if (selectOpen) this.selectPending = true;
+      else if (this.overlay && this.focusInside()) this.onPointerLeft();
       this.armHide();
     });
     bar.addEventListener('focusin', () => this.reveal());
@@ -45,6 +49,12 @@ export class Bar {
       if (!this.bar.contains(e.relatedTarget as Node | null)) this.armHide();
     });
     window.addEventListener('pointermove', (e) => {
+      // pointer events resume once the native popup is gone: this is the real leave
+      if (this.selectPending && !this.bar.contains(e.target as Node)) {
+        this.selectPending = false;
+        if (this.overlay && this.focusInside()) this.onPointerLeft();
+        this.armHide();
+      }
       if (!this.overlay || !this.hidden) return;
       if (e.clientY > HOT_EDGE_PX) {
         if (this.edgeTimer) clearTimeout(this.edgeTimer);
