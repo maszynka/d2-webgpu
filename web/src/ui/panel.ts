@@ -183,18 +183,20 @@ export class Panel {
 
   private togglePopover(pop: HTMLElement, open?: boolean): void {
     const show = open ?? pop.hidden;
-    this.closePopovers();
+    this.closePopovers(false);
     pop.hidden = !show;
     const btn = pop === this.tools ? this.toolsBtn : this.brand;
     btn.setAttribute('aria-expanded', String(show));
     this.onPopover();
   }
 
-  closePopovers(): void {
+  /** `restore`: put the mode select back on what is shown (Viewer/Map picked, then the popover dismissed). */
+  closePopovers(restore = true): void {
     for (const [pop, btn] of [[this.tools, this.toolsBtn], [this.about, this.brand]] as const) {
       pop.hidden = true;
       btn.setAttribute('aria-expanded', 'false');
     }
+    if (restore) this.mode.value = this.isPlaying ? 'play' : this.shownMode;
     this.onPopover();
   }
 
@@ -263,10 +265,12 @@ export class Panel {
 
   /** The mode select follows what is shown. */
   setMode(m: ModeName): void {
+    this.shownMode = m;
     this.mode.value = m;
   }
 
   private isPlaying = false;
+  private shownMode: ModeName = 'demo';
   setPlaying(on: boolean): void {
     this.isPlaying = on;
     this.playBtn.textContent = on ? 'Stop game' : 'Play';
