@@ -1,0 +1,48 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0007: the frame loop stays a blocking loop (JSPI, or -sASYNCIFY for every browser: D2FULL_ASYNC). pace_frame and the boot loop yield with d2web::yield (emscripten_sleep) instead of SDL_Delay so the Worker event loop can deliver input and returned frame buffers, and the loop pauses while the page wants no frames (input is still pumped while paused). Why not emscripten_set_main_loop (tried first): with -fwasm-exceptions its unwind-to-JS exception runs the C++ cleanups of run_windowed/main, i.e. destroys the game state under the loop (garbage screen values, 87 s first frame).
+diff -ru a/apps/d2d/main.cpp b/apps/d2d/main.cpp
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -416,6 +416,11 @@
+ constexpr std::uint32_t kFrameBudgetMs = 16;   // ~60 fps ceiling
+ inline void pace_frame(std::uint32_t frame_start_ms) {
+     const std::uint32_t elapsed = std::uint32_t(SDL_GetTicks()) - frame_start_ms;
++#ifdef D2WEB
++    // Suspends the wasm (JSPI/Asyncify) so the Worker's event loop runs: input
++    // messages, buffer returns, timers.
++    d2web::yield(elapsed < kFrameBudgetMs ? int(kFrameBudgetMs - elapsed) : 1);
++#else
+     if (elapsed < kFrameBudgetMs) {
+         SDL_Delay(kFrameBudgetMs - elapsed);
+     } else {
+@@ -423,6 +428,7 @@
+         // the scheduler.
+         SDL_Delay(1);
+     }
++#endif
+ }
+ 
+ int run_windowed(std::vector<std::uint8_t>& framebuffer,
+@@ -494,7 +500,11 @@
+         SDL_RenderPresent(win.renderer);
+         crash_frame.update(framebuffer);
+         if (++frame_count == 1) d2d::log::info("First frame presented at {} ms after launch.", d2d::log::ms());
++#ifdef D2WEB
++        d2web::yield(10);   // boot loop: let the Worker's event loop run (input, buffer returns)
++#else
+         SDL_Delay(10);
++#endif
+     }
+     if (loading.valid()) loading.get();
+     Audio audio;
+@@ -728,6 +738,10 @@
+     register_game_verbs(channel, win, screen, csu, character, town, scene, audio);
+ 
+     while (!quit) {
++#ifdef D2WEB
++        // The page asks for frames (see web/src/full/framepool.ts): none wanted (hidden tab) = pause.
++        if (!d2web::frame_wanted()) { d2web::pump_input(); d2web::yield(10); continue; }   // input still lands: quit / blur apply while paused
++#endif
+         // Signal-driven quit — Ctrl-C / SIGTERM. The atomic write from
+         // d2d_sigint_handler is polled here; SDL_EVENT_QUIT and window
+         // close still work through handle_sdl_events.

@@ -78,6 +78,14 @@ export class Renderer {
   private readonly viewUniform: GPUBuffer;
   private readonly spriteBind: GPUBindGroup;
   private readonly blitBind: GPUBindGroup;
+  private readonly blitBgl: GPUBindGroupLayout;
+  private readonly blitSampler: GPUSampler;
+  private frameTex: GPUTexture | null = null;
+  private frameBind: GPUBindGroup | null = null;
+  private frameW = 0;
+  private frameH = 0;
+  /** where the last presented RGBA frame sits on the canvas (canvas device pixels) */
+  lastRect = { x: 0, y: 0, w: 1, h: 1 };
   private readonly spritePipelines = new Map<BlendMode, GPURenderPipeline>();
   private readonly blitPipeline: GPURenderPipeline;
   private instanceBuf: GPUBuffer | null = null;
@@ -279,11 +287,13 @@ export class Renderer {
       fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: this.canvasFormat }] },
       primitive: { topology: 'triangle-list' },
     });
+    this.blitBgl = blitBgl;
+    this.blitSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' });
     this.blitBind = device.createBindGroup({
       layout: blitBgl,
       entries: [
         { binding: 0, resource: this.sceneView },
-        { binding: 1, resource: device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' }) },
+        { binding: 1, resource: this.blitSampler },
       ],
     });
     device.addEventListener?.('uncapturederror', (e) => {
@@ -429,6 +439,55 @@ export class Renderer {
     blitPass.setBindGroup(0, this.blitBind);
     blitPass.draw(3);
     blitPass.end();
+    device.queue.submit([enc.finish()]);
+  }
+
+  /**
+   * Show a finished RGBA frame (the full game's CPU framebuffer, any width, e.g. widescreen) through the same
+   * nearest blit as the scene: upload to an rgba8unorm texture, integer-scale letterbox onto the canvas.
+   */
+  presentRgba(width: number, height: number, rgba: Uint8Array): void {
+    if (rgba.length < width * height * 4) throw new Error('presentRgba: pixel buffer too small');
+    const device = this.device;
+    if (!this.frameTex || this.frameW !== width || this.frameH !== height) {
+      this.frameTex?.destroy();
+      this.frameTex = device.createTexture({
+        label: 'full-frame',
+        size: [width, height],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      this.frameBind = device.createBindGroup({
+        layout: this.blitBgl,
+        entries: [
+          { binding: 0, resource: this.frameTex.createView() },
+          { binding: 1, resource: this.blitSampler },
+        ],
+      });
+      this.frameW = width;
+      this.frameH = height;
+    }
+    device.queue.writeTexture(
+      { texture: this.frameTex },
+      rgba as Uint8Array<ArrayBuffer>,
+      { bytesPerRow: width * 4, rowsPerImage: height },
+      [width, height],
+    );
+    this.resizeToDisplay();
+    const r = fitRect(width, height, this.canvas.width, this.canvas.height);
+    this.lastRect = r;
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginRenderPass({
+      colorAttachments: [
+        { view: this.ctx.getCurrentTexture().createView(), clearValue: { r: 0.05, g: 0.05, b: 0.06, a: 1 }, loadOp: 'clear', storeOp: 'store' },
+      ],
+    });
+    pass.setViewport(r.x, r.y, r.w, r.h, 0, 1);
+    pass.setScissorRect(r.x, r.y, r.w, r.h);
+    pass.setPipeline(this.blitPipeline);
+    pass.setBindGroup(0, this.frameBind);
+    pass.draw(3);
+    pass.end();
     device.queue.submit([enc.finish()]);
   }
 }

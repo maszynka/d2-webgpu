@@ -9,6 +9,7 @@ sha="$(git rev-parse --short HEAD)"
 [ -z "$(git status --porcelain -- . ':!third_party')" ] || { echo "working tree dirty" >&2; exit 1; }
 
 bash wasm/build.sh
+bash wasm/full/build.sh
 archive="d2-webgpu-${sha}.tar.gz"
 (cd web && VITE_COMMIT="$sha" VITE_SOURCE_URL="/source/${archive}" pnpm build)
 

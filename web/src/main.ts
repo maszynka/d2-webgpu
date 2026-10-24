@@ -13,6 +13,7 @@ import { Renderer, fitRect } from './gpu/renderer';
 import { switchScene } from './scene-switch';
 import { bindLightControls } from './ui/lightui';
 import { Panel } from './ui/panel';
+import { FullGame, type FullGameStats } from './full/fullgame';
 import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
@@ -20,7 +21,7 @@ import { MapScene } from './world/tilemap';
 
 declare global {
   interface Window {
-    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string; lighting?: { mode: string; ambient: number; lights: number } };
+    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string; full?: FullGameStats; fullGame?: FullGame; lighting?: { mode: string; ambient: number; lights: number } };
   }
 }
 
@@ -116,6 +117,8 @@ async function main(): Promise<void> {
 
   // WASM core (optional): falls back to demo mode without /d2core.js
   let core: CoreClient | null = null;
+  let full: FullGame | null = null;
+  let mpqFiles: File[] = [];
   let actPalette: Palette | null = null;
   const palettes = new Map<string, Palette>();
   const panel = new Panel({
@@ -123,6 +126,7 @@ async function main(): Promise<void> {
       if (!core) throw new Error('The wasm core is not loaded (d2core.wasm missing), game files cannot be read.');
       const sel = selectMpqs(files);
       if (sel.files.length === 0) throw new Error(`No Diablo II archives (d2data.mpq, ...) found in ${label}.`);
+      mpqFiles = sel.files;
       const r = await core.mountMpqs(sel.files, sel.order);
       palettes.clear();
       actPalette = null;
@@ -197,8 +201,53 @@ async function main(): Promise<void> {
       lightUi.set('off', 0.3);
       panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
     },
-    onDemo: showDemo,
+    onDemo() {
+      void stopFull();
+      showDemo();
+    },
+    onVolume(v) {
+      full?.setVolume(v);
+    },
+    async onPlay() {
+      if (full) {
+        const stopping = stopFull();
+        showDemo();
+        await stopping;
+        panel.setStatus('Game stopped.');
+        return;
+      }
+      if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
+      await pendingStop; // never two workers on IndexedDB at once
+      canvas.style.cursor = 'none';
+      full = new FullGame(renderer, canvas, mpqFiles, {
+        onStatus: (text, error) => panel.setStatus(`Game: ${text}`, error),
+        onLog: (line) => console.debug('[d2]', line),
+        onExit: () => {
+          void stopFull().then(() => {
+            showDemo();
+            panel.setStatus('Game exited.');
+          });
+        },
+      });
+      state.mode = 'full';
+      state.full = full.stats;
+      state.fullGame = full;
+      full.setVolume(panel.volume);
+      panel.setPlaying(true);
+    },
   });
+  let pendingStop: Promise<void> = Promise.resolve();
+  const stopFull = async (): Promise<void> => {
+    const g = full;
+    if (!g) return;
+    full = null;
+    delete state.fullGame;
+    state.mode = 'demo';
+    canvas.style.cursor = '';
+    panel.setPlaying(false);
+    pendingStop = g.stop();
+    await pendingStop;
+  };
   void CoreClient.start().then(({ client, status }) => {
     core = client;
     state.core = status;
@@ -209,7 +258,7 @@ async function main(): Promise<void> {
   // input
   const keys = new Set<string>();
   window.addEventListener('keydown', (e) => {
-    if (e.target instanceof HTMLInputElement) return;
+    if (full || e.target instanceof HTMLInputElement) return;
     if (e.key === '+' || e.key === '=') camera.zoomBy(1);
     else if (e.key === '-') camera.zoomBy(-1);
     else if (e.key.startsWith('Arrow')) {
@@ -221,6 +270,7 @@ async function main(): Promise<void> {
   canvas.addEventListener(
     'wheel',
     (e) => {
+      if (full) return;
       e.preventDefault();
       camera.zoomBy(e.deltaY < 0 ? 1 : -1);
     },
@@ -228,6 +278,7 @@ async function main(): Promise<void> {
   );
   let drag: { x: number; y: number } | null = null;
   canvas.addEventListener('pointerdown', (e) => {
+    if (full) return;
     drag = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture(e.pointerId);
   });
@@ -247,6 +298,18 @@ async function main(): Promise<void> {
   let fps = 0;
   const t0 = last;
   const frame = (now: number): void => {
+    if (full) {
+      full.tick();
+      state.frames++;
+      const st = full.stats;
+      debug.textContent = [
+        `mode: full game (${st.status})`,
+        `frame: ${st.width}x${st.height}  received: ${st.frames}  shown: ${st.shown}  superseded: ${st.dropped}`,
+        `wasm heap: ${st.heapMiB} MiB`,
+      ].join('\n');
+      requestAnimationFrame(frame);
+      return;
+    }
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     const speed = 400 * dt / camera.zoom;

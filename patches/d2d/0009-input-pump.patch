@@ -1,0 +1,15 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0009: main.cpp frame loop drains the page's input queue (d2web::pump_input -> SDL_PushEvent, the same path devctl uses) once per frame, before SDL_PollEvent.
+
+--- a/apps/d2d/main.cpp
++++ b/apps/d2d/main.cpp
+@@ -784,6 +784,9 @@
+         current_phase.store(std::uint32_t(MainPhase::PollEvents),
+                             std::memory_order_relaxed);
+         bool mouse_took_over = false;   // the mouse moved or clicked this frame: it ends the pad's field mode
++#ifdef D2WEB
++        d2web::pump_input();   // the page's mouse/keyboard events -> SDL_PushEvent
++#endif
+         SDL_Event event;
+         while (SDL_PollEvent(&event)) {
+             // SDL3 doesn't rescale event coords under logical presentation;
