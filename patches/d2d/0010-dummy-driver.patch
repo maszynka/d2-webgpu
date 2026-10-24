@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0010: main() selects SDL's dummy video driver + software renderer unconditionally (the existing --headless hints), so SDL_CreateWindow/Renderer work in a Worker.
 
 --- a/apps/d2d/main.cpp

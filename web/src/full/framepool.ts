@@ -37,7 +37,6 @@ export class FramePool {
 
   /** Copy w*h RGBA pixels at `ptr` of `heap` into a pooled buffer and post it. False when both are in flight. */
   submit(heap: Uint8Array, ptr: number, w: number, h: number): boolean {
-    if (this.want > 0) this.want--;
     const n = w * h * 4;
     let buf = this.free.pop();
     if (buf && buf.byteLength !== n) {
@@ -51,13 +50,17 @@ export class FramePool {
     }
     new Uint8Array(buf).set(heap.subarray(ptr, ptr + n));
     this.post({ t: 'frame', w, h, buf, heap: heap.length }, [buf]);
+    if (this.want > 0) this.want--; // a credit is spent only by a frame actually posted
     return true;
   }
 
-  /** The main thread is done with `buf` and wants the next frame. */
-  recycle(buf: ArrayBuffer | null): void {
+  /**
+   * The main thread hands `buf` back. `want` is true only when it was shown (an animation frame ran), which asks
+   * for the next frame; a superseded buffer comes back with want=false, so a hidden tab (no rAF) keeps the game paused.
+   */
+  recycle(buf: ArrayBuffer | null, want = true): void {
     if (buf) this.free.push(buf);
-    this.want = Math.min(this.want + 1, this.max);
+    if (want) this.want = Math.min(this.want + 1, this.max);
   }
 }
 
@@ -66,13 +69,13 @@ export class FrameMailbox {
   private latest: FrameMessage | null = null;
   dropped = 0;
 
-  constructor(private readonly recycle: (buf: ArrayBuffer | null) => void) {}
+  constructor(private readonly recycle: (buf: ArrayBuffer | null, want: boolean) => void) {}
 
   /** A frame arrived: an older one still waiting is superseded (its buffer goes straight back). */
   receive(msg: FrameMessage): void {
     if (this.latest) {
       this.dropped++;
-      this.recycle(this.latest.buf);
+      this.recycle(this.latest.buf, false);
     }
     this.latest = msg;
   }
@@ -83,7 +86,7 @@ export class FrameMailbox {
     if (!f) return false;
     this.latest = null;
     present(f.w, f.h, new Uint8Array(f.buf));
-    this.recycle(f.buf);
+    this.recycle(f.buf, true);
     return true;
   }
 }

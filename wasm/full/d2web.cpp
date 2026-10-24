@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 // All JS-side state lives in globalThis.__d2web, created by game.worker.ts (or by
 // the node smoke test); every EM_JS body below creates a default one when nobody did
@@ -38,12 +39,19 @@ EM_JS(void, d2web_present_js, (const std::uint8_t* p, int w, int h), {
     else if (s.want > 0) s.want--;
 });
 
+// The page flushes IndexedDB right after a character save (worker: __d2web.onSaved).
+EM_JS(void, d2web_saved_js, (), {
+    const s = globalThis.__d2web;
+    if (s && s.onSaved) s.onSaved();
+});
+
 namespace d2web {
 namespace {
 
 std::array<bool, SDL_SCANCODE_COUNT> g_keys{};
 SDL_MouseButtonFlags g_buttons = 0;
 SDL_Keymod g_mods = SDL_KMOD_NONE;
+bool g_text_active = false;
 float g_mouse_x = 0.f, g_mouse_y = 0.f;
 
 SDL_Keymod mods_from_flags(int f) {
@@ -118,15 +126,22 @@ void handle(const std::int32_t* r) {
         break;
     }
     case 5: {
+        if (!g_text_active) break;   // hotkeys must not land in a text field (and vice versa)
         char text[5] = {};
         const auto cp = std::uint32_t(r[1]);
         if (cp < 0x80) { text[0] = char(cp); }
         else if (cp < 0x800) { text[0] = char(0xC0 | (cp >> 6)); text[1] = char(0x80 | (cp & 0x3F)); }
         else if (cp < 0x10000) { text[0] = char(0xE0 | (cp >> 12)); text[1] = char(0x80 | ((cp >> 6) & 0x3F)); text[2] = char(0x80 | (cp & 0x3F)); }
         else { text[0] = char(0xF0 | (cp >> 18)); text[1] = char(0x80 | ((cp >> 12) & 0x3F)); text[2] = char(0x80 | ((cp >> 6) & 0x3F)); text[3] = char(0x80 | (cp & 0x3F)); }
+        // SDL_PushEvent keeps the pointer (it does not copy text), and SDL's own temporary-string helpers are
+        // private: events point into a ring of slots, which outlives them (consumed within the frame; 256 slots).
+        static char ring[256][8];
+        static unsigned slot = 0;
+        char* copy = ring[slot++ % 256];
+        std::memcpy(copy, text, sizeof text);
         SDL_Event e{};
         e.type = SDL_EVENT_TEXT_INPUT;
-        e.text.text = text;   // SDL_PushEvent copies text events
+        e.text.text = copy;
         SDL_PushEvent(&e);
         break;
     }
@@ -151,7 +166,12 @@ void handle(const std::int32_t* r) {
 void pump_input() {
     std::int32_t record[6];
     while (d2web_next_event_js(record)) handle(record);
+    audio_flush();   // once per frame: the audio commands the last frame produced
 }
+
+void saved() { d2web_saved_js(); }
+bool text_input_active() { return g_text_active; }
+void text_input(bool on) { g_text_active = on; }
 
 void present(const void* rgba, int w, int h) {
     d2web_present_js(static_cast<const std::uint8_t*>(rgba), w, h);

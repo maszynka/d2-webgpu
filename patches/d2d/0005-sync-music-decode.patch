@@ -1,5 +1,6 @@
-d2full 0005: apps/d2d/audio.hpp:379 std::async music decode -> d2_async (inline in the browser build). Dormant until stage F3 (no audio device yet).
-
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0005: apps/d2d/audio.hpp:379 std::async music decode -> d2_async (inline in the browser build; an exception from the read, e.g. a truncated MPQ, becomes an empty result = the existing "music not loaded" path instead of escaping main()).
+diff -ru a/apps/d2d/audio.hpp b/apps/d2d/audio.hpp
 --- a/apps/d2d/audio.hpp
 +++ b/apps/d2d/audio.hpp
 @@ -27,6 +27,15 @@
@@ -9,7 +10,7 @@ d2full 0005: apps/d2d/audio.hpp:379 std::async music decode -> d2_async (inline 
 +// Music decoding on a worker thread; the browser build has none and decodes inline.
 +template <class F> auto d2_async(F&& f) {
 +#ifdef D2WEB
-+    return d2web::run_now(std::forward<F>(f));
++    return d2web::run_now_or_default(std::forward<F>(f));   // a failed read is "music not loaded" (nullopt), not a crash
 +#else
 +    return std::async(std::launch::async, std::forward<F>(f));
 +#endif

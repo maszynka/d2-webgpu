@@ -1,7 +1,12 @@
-d2full 0003: components/game/gamedata.cpp:1196 want_level builds the level inline (ready future) instead of std::async. Keeps poll_levels()/level() semantics; the build is a frame hitch (stage F4: build in slices between frames).
-
---- a/components/game/gamedata.cpp
-+++ b/components/game/gamedata.cpp
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0003: no builder thread: GameData::want_level queues the level (GameData::LevelBuilder::web_pending), poll_levels() builds one queued level per call inline as an already-ready future (so the neighbours of a new level hitch one by one, not all in a single frame), level() builds a queued level at once. The job is claimed in `jobs` before building (re-entrancy through want_nearby). Stage F4+: build in slices inside the DRLG.
+diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
+diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
+diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
+diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
+diff -ru a/components/game/gamedata.cpp b/components/game/gamedata.cpp
+--- a/components/game/gamedata.cpp	2026-10-24 01:49:28
++++ b/components/game/gamedata.cpp	2026-10-24 02:57:26
 @@ -2,6 +2,9 @@
  // GameData's runtime side: levels built on demand (the level builder),
  // their populations, the COF timings the World reads. A translation unit
@@ -12,16 +17,73 @@ d2full 0003: components/game/gamedata.cpp:1196 want_level builds the level inlin
  #include "gamedata.hpp"
  
  #include "log.hpp"
-@@ -1193,7 +1196,12 @@
+@@ -1193,11 +1196,32 @@
  void GameData::want_level(int id) const {
      if (!builder || !builder->act1 || id == town.id || levels.contains(id) || builder->jobs.contains(id)
          || !std::ranges::contains(kBuiltLevels, id)) return;
 +    #ifdef D2WEB
-+    // No threads: built inline, as an already-ready future, so poll_levels() installs it on its next call.
-+    builder->jobs.emplace(id, d2web::run_now([this, id] { return build_level(*this, *builder, id); }));
++    // No threads: a wanted level is queued, and poll_levels() builds one per call (a frame hitch each, not all
++    // the neighbours at once); level() builds a queued one at once when someone needs it.
++    if (!std::ranges::contains(builder->web_pending, id)) builder->web_pending.push_back(id);
 +#else
      builder->jobs.emplace(id, std::async(std::launch::async, [this, id] { return build_level(*this, *builder, id); }));
 +#endif
  }
  
++#ifdef D2WEB
++// Builds level `id` inline into a ready future (claimed first: the build can re-enter want_level).
++static void d2web_build(const GameData& game_data, int id) {
++    auto& job = game_data.builder->jobs[id];
++    job = d2web::run_now([&game_data, id] { return build_level(game_data, *game_data.builder, id); });
++}
++#endif
++
  void GameData::poll_levels() const {
+     if (!builder) return;
++#ifdef D2WEB
++    if (!builder->web_pending.empty()) {   // one prefetch per call
++        const int id = builder->web_pending.front();
++        builder->web_pending.erase(builder->web_pending.begin());
++        if (!levels.contains(id) && !builder->jobs.contains(id)) d2web_build(*this, id);
++    }
++#endif
+     for (auto job = builder->jobs.begin(); job != builder->jobs.end();)
+         if (job->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+             install_level(*this, job->first, finish_job(job->second, job->first));
+@@ -1209,6 +1233,13 @@
+     if (id == town.id) return &town;
+     if (const auto found = levels.find(id); found != levels.end()) return found->second.get();
+     want_level(id);
++#ifdef D2WEB
++    if (builder)
++        if (const auto queued = std::ranges::find(builder->web_pending, id); queued != builder->web_pending.end()) {
++            builder->web_pending.erase(queued);   // needed now: not later
++            if (!builder->jobs.contains(id)) d2web_build(*this, id);
++        }
++#endif
+     const auto job = builder ? builder->jobs.find(id) : decltype(builder->jobs.end()){};
+     if (!builder || job == builder->jobs.end()) return nullptr;
+     auto level = finish_job(job->second, id);                    // built now, or waited for
+@@ -1224,7 +1255,8 @@
+     const auto placement = std::ranges::find(layout, level.id, &d2d::drlg::Placed::level);
+     if (placement != layout.end())
+         for (const auto& other_placement : layout)
+-            if (other_placement.level != level.id && other_placement.x <= placement->x + placement->width && placement->x <= other_placement.x + other_placement.width && other_placement.y <= placement->y + placement->height && placement->y <= other_placement.y + other_placement.height)
++            if (other_placement.level != level.id
++                && other_placement.x <= placement->x + placement->width && placement->x <= other_placement.x + other_placement.width && other_placement.y <= placement->y + placement->height && placement->y <= other_placement.y + other_placement.height)
+                 game_data.want_level(other_placement.level);
+     for (const auto& warp : level.warps) game_data.want_level(warp.destination);
+     for (const int walk : walk_links(game_data, level.id)) game_data.want_level(walk);
+diff -ru a/components/game/gamedata.hpp b/components/game/gamedata.hpp
+--- a/components/game/gamedata.hpp	2026-10-24 01:49:28
++++ b/components/game/gamedata.hpp	2026-10-24 02:57:26
+@@ -801,6 +801,9 @@
+     d2d::txt::Table objects, levels, sound_env;
+     std::unordered_map<std::string, std::size_t> obj_row;
+     std::map<int, std::future<std::unique_ptr<Level>>> jobs;   // the main thread's: builds under way
++#ifdef D2WEB
++    std::vector<int> web_pending;                           // no builder thread: wanted levels, built one per poll_levels() call
++#endif
+ };
+ 
+ // Encode (style, sequence, type) into a single lookup key. Style + sequence

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Silent OpenAL stand-in for the browser build (wasm/full). The game runs in a
-// Worker, which has no Web Audio; alcOpenDevice() fails, so Audio::init() logs
-// "no OpenAL device -- running silent" and every channel stays idle. A real
-// backend (postMessage -> Web Audio on the main thread) replaces this in stage F3.
+// OpenAL subset for the browser build (wasm/full), implemented in d2web_audio.cpp.
+// The game runs in a Worker, which has no Web Audio: this "virtual OpenAL" keeps
+// buffer/source state in C++ (playing/stopped is computed from PCM length and time,
+// so the game never waits for the page) and batches voice commands to the main
+// thread (web/src/full/audio.ts), where Web Audio plays them.
 #pragma once
 #ifdef __cplusplus
 extern "C" {
@@ -14,6 +15,7 @@ typedef int ALenum;
 typedef float ALfloat;
 typedef char ALboolean;
 
+#define AL_INITIAL 0x1011
 #define AL_FALSE 0
 #define AL_TRUE 1
 #define AL_NO_ERROR 0
@@ -37,27 +39,27 @@ typedef char ALboolean;
 #define AL_FORMAT_STEREO16 0x1103
 #define AL_DIRECT_CHANNELS_SOFT 0x1033
 
-static inline void alListenerf(ALenum, ALfloat) {}
-static inline void alSourcef(ALuint, ALenum, ALfloat) {}
-static inline void alSourcei(ALuint, ALenum, ALint) {}
-static inline void alSource3f(ALuint, ALenum, ALfloat, ALfloat, ALfloat) {}
-static inline void alGetSourcei(ALuint, ALenum, ALint* v) { if (v) *v = AL_STOPPED; }
-static inline void alGetSourcef(ALuint, ALenum, ALfloat* v) { if (v) *v = 0.f; }
-static inline void alGenBuffers(ALsizei, ALuint* b) { if (b) *b = 0; }
-static inline void alGenSources(ALsizei, ALuint* s) { if (s) *s = 0; }
-static inline void alDeleteBuffers(ALsizei, const ALuint*) {}
-static inline void alDeleteSources(ALsizei, const ALuint*) {}
-static inline void alBufferData(ALuint, ALenum, const void*, ALsizei, ALsizei) {}
-static inline void alSourcePlay(ALuint) {}
-static inline void alSourcePlayv(ALsizei, const ALuint*) {}
-static inline void alSourceStop(ALuint) {}
-static inline void alSourcePause(ALuint) {}
-static inline void alSourcePausev(ALsizei, const ALuint*) {}
-static inline void alSourceQueueBuffers(ALuint, ALsizei, const ALuint*) {}
-static inline void alSourceUnqueueBuffers(ALuint, ALsizei, ALuint*) {}
-static inline ALenum alGetError(void) { return AL_NO_ERROR; }
-static inline const char* alGetString(ALenum) { return ""; }
-static inline ALboolean alIsExtensionPresent(const char*) { return AL_FALSE; }
+void alListenerf(ALenum, ALfloat);
+void alSourcef(ALuint, ALenum, ALfloat);
+void alSourcei(ALuint, ALenum, ALint);
+void alSource3f(ALuint, ALenum, ALfloat, ALfloat, ALfloat);
+void alGetSourcei(ALuint, ALenum, ALint*);
+void alGetSourcef(ALuint, ALenum, ALfloat*);
+void alGenBuffers(ALsizei, ALuint*);
+void alGenSources(ALsizei, ALuint*);
+void alDeleteBuffers(ALsizei, const ALuint*);
+void alDeleteSources(ALsizei, const ALuint*);
+void alBufferData(ALuint, ALenum, const void*, ALsizei, ALsizei);
+void alSourcePlay(ALuint);
+void alSourcePlayv(ALsizei, const ALuint*);
+void alSourceStop(ALuint);
+void alSourcePause(ALuint);
+void alSourcePausev(ALsizei, const ALuint*);
+void alSourceQueueBuffers(ALuint, ALsizei, const ALuint*);
+void alSourceUnqueueBuffers(ALuint, ALsizei, ALuint*);
+ALenum alGetError(void);
+const char* alGetString(ALenum);
+ALboolean alIsExtensionPresent(const char*);
 #ifdef __cplusplus
 }
 #endif

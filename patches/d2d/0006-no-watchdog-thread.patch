@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0006: main.cpp:709 hang-watchdog std::thread compiled out in the browser build (a stuck frame is a stuck tab there). The Sentry frame-capture thread never starts: shim sentry.h reports sentry_is_enabled() == 0.
 
 --- a/apps/d2d/main.cpp

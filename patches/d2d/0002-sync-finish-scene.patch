@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0002: main.cpp:1632 std::async(finish_scene) -> d2web::run_now (inline, ready future). The title is not shown while the rest of the scene loads (the Worker posts load status instead).
 
 --- a/apps/d2d/main.cpp

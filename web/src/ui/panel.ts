@@ -29,6 +29,8 @@ export interface PanelHandlers {
   onDemo(): void;
   /** Start (or stop, when running) the full game on the selected folder. */
   onPlay(): void | Promise<void>;
+  /** The game volume slider moved (0..1). */
+  onVolume(volume: number): void;
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -84,6 +86,21 @@ export class Panel {
     });
     el('demo-btn').addEventListener('click', () => h.onDemo());
     el('play-btn').addEventListener('click', () => void this.run(async () => h.onPlay()));
+    const slider = el<HTMLInputElement>('volume');
+    try {
+      const saved = localStorage.getItem('d2.volume');
+      if (saved !== null && Number.isFinite(Number(saved))) slider.value = saved;
+    } catch {
+      /* storage unavailable: keep the default */
+    }
+    slider.addEventListener('input', () => {
+      try {
+        localStorage.setItem('d2.volume', slider.value);
+      } catch {
+        /* ignore */
+      }
+      h.onVolume(this.volume);
+    });
   }
 
   setStatus(text: string, error = false): void {
@@ -93,6 +110,11 @@ export class Panel {
 
   enableGame(on: boolean): void {
     this.tools.hidden = !on;
+  }
+
+  /** Game volume 0..1 (the slider). */
+  get volume(): number {
+    return Number(el<HTMLInputElement>('volume').value) / 100;
   }
 
   setPlaying(on: boolean): void {

@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0001: SDL_GetKeyboardState/GetModState/GetMouseState and SDL_ConvertEventToRenderCoordinates are redirected (macros in wasm/full/shim/d2web.hpp) to our own tables, because SDL_PushEvent does not update SDL's polled state. One concern: platform.hpp includes the shim under D2WEB. Safe to upstream behind a platform hook; the macros live outside the tree.
 
 --- a/apps/d2d/platform.hpp

@@ -52,7 +52,7 @@ set(STORM_USE_BUNDLED_LIBRARIES OFF CACHE BOOL "" FORCE)
 set(STORM_SKIP_INSTALL ON CACHE BOOL "" FORCE)
 set(STORM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(stormlib)
-target_compile_options(storm PRIVATE -w)
+target_compile_options(storm PRIVATE -w -fno-strict-aliasing)   # see wasm/full/CMakeLists.txt: ADPCM/Huffman miscompile under strict aliasing
 if(EMSCRIPTEN)
     target_compile_options(storm PRIVATE -O3)
 endif()

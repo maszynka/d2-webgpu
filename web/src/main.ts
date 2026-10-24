@@ -21,7 +21,7 @@ import { MapScene } from './world/tilemap';
 
 declare global {
   interface Window {
-    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string; full?: FullGameStats; lighting?: { mode: string; ambient: number; lights: number } };
+    __d2?: { ready: boolean; frames: number; adapter: unknown; core: CoreStatus | null; mode?: string; error?: string; full?: FullGameStats; fullGame?: FullGame; lighting?: { mode: string; ambient: number; lights: number } };
   }
 }
 
@@ -202,34 +202,51 @@ async function main(): Promise<void> {
       panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
     },
     onDemo() {
-      stopFull();
+      void stopFull();
       showDemo();
     },
-    onPlay() {
+    onVolume(v) {
+      full?.setVolume(v);
+    },
+    async onPlay() {
       if (full) {
-        stopFull();
+        const stopping = stopFull();
         showDemo();
+        await stopping;
         panel.setStatus('Game stopped.');
         return;
       }
       if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
+      await pendingStop; // never two workers on IndexedDB at once
       canvas.style.cursor = 'none';
       full = new FullGame(renderer, canvas, mpqFiles, {
         onStatus: (text, error) => panel.setStatus(`Game: ${text}`, error),
         onLog: (line) => console.debug('[d2]', line),
+        onExit: () => {
+          void stopFull().then(() => {
+            showDemo();
+            panel.setStatus('Game exited.');
+          });
+        },
       });
       state.mode = 'full';
       state.full = full.stats;
+      state.fullGame = full;
+      full.setVolume(panel.volume);
       panel.setPlaying(true);
     },
   });
-  const stopFull = (): void => {
-    if (!full) return;
-    full.stop();
+  let pendingStop: Promise<void> = Promise.resolve();
+  const stopFull = async (): Promise<void> => {
+    const g = full;
+    if (!g) return;
     full = null;
+    delete state.fullGame;
     state.mode = 'demo';
     canvas.style.cursor = '';
     panel.setPlaying(false);
+    pendingStop = g.stop();
+    await pendingStop;
   };
   void CoreClient.start().then(({ client, status }) => {
     core = client;

@@ -3,6 +3,7 @@
 // (Renderer.presentRgba) and forwards DOM mouse/keyboard/wheel events as game input.
 
 import type { Renderer } from '../gpu/renderer';
+import { AudioEngine, type ContextLike } from './audio';
 import { FrameMailbox, type FrameMessage } from './framepool';
 import { EV, modFlags, scancodeOf, sdlButton, shouldPreventDefault, textOf, toFramePixels, wheelRecordValue, type InputRecord } from './input';
 import type { FromWorker, ToWorker } from './protocol';
@@ -23,15 +24,40 @@ export interface FullGameStats {
   status: string;
   exited: number | null;
   logs: string[];
+  /** audio batches received from the game / commands in them / voices playing now / state of the AudioContext */
+  audioMessages: number;
+  audioOps: number;
+  audioVoices: number;
+  audioState: string;
+  /** IndexedDB writes completed by the worker */
+  synced: number;
+}
+
+export interface PerfSample {
+  /** frames the game produced in the window */
+  frames: number;
+  seconds: number;
+  fps: number;
+  /** gaps between received frames, ms */
+  p95Gap: number;
+  maxGap: number;
+  /** gaps over 100 ms (level builds, hitches) */
+  hitches: number;
+  heapMiB: number;
 }
 
 export class FullGame {
-  readonly stats: FullGameStats = { frames: 0, shown: 0, dropped: 0, heapMiB: 0, width: 800, height: 600, status: 'starting', exited: null, logs: [] };
+  readonly stats: FullGameStats = { frames: 0, shown: 0, dropped: 0, heapMiB: 0, width: 800, height: 600, status: 'starting', exited: null, logs: [], audioMessages: 0, audioOps: 0, audioVoices: 0, audioState: 'none', synced: 0 };
   private worker: Worker | null;
   private readonly mailbox: FrameMailbox;
   private pendingInput: InputRecord[] = [];
   private motion: { x: number; y: number } | null = null;
   private readonly cleanup: (() => void)[] = [];
+  private audio: AudioEngine | null = null;
+  private ctlSeq = 0;
+  private readonly ctlWaiting = new Map<number, (text: string) => void>();
+  private frameTimes: number[] = [];
+  private readonly flushedResolvers: (() => void)[] = [];
 
   constructor(
     private readonly renderer: Renderer,
@@ -42,9 +68,10 @@ export class FullGame {
     args: string[] = [],
   ) {
     this.worker = new Worker(new URL('./game.worker.ts', import.meta.url), { type: 'module' });
-    this.mailbox = new FrameMailbox((buf) => this.send({ t: 'recycle', buf }, buf ? [buf] : []));
+    this.mailbox = new FrameMailbox((buf, want) => this.send({ t: 'recycle', buf, want }, buf ? [buf] : []));
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.onMessage(e.data);
     this.worker.onerror = (e) => this.fail(e.message || 'game worker crashed');
+    this.setupAudio();
     this.send({ t: 'start', files, baseUrl, args });
     this.attachInput();
   }
@@ -57,6 +84,22 @@ export class FullGame {
     switch (m.t) {
       case 'frame':
         this.onFrame(m);
+        break;
+      case 'audio':
+        this.stats.audioMessages++;
+        this.stats.audioOps += m.ops.length;
+        this.audio?.handle(m.ops);
+        this.stats.audioVoices = this.audio?.activeVoices ?? 0;
+        break;
+      case 'ctlReply':
+        this.ctlWaiting.get(m.id)?.(m.text);
+        this.ctlWaiting.delete(m.id);
+        break;
+      case 'flushed':
+        this.flushedResolvers.splice(0).forEach((r) => r());
+        break;
+      case 'synced':
+        this.stats.synced = m.saves;
         break;
       case 'status':
         this.stats.status = m.text;
@@ -85,10 +128,89 @@ export class FullGame {
 
   private onFrame(m: FrameMessage): void {
     this.stats.frames++;
+    this.frameTimes.push(performance.now());
+    if (this.frameTimes.length > 50_000) this.frameTimes.splice(0, 10_000);
     this.stats.width = m.w;
     this.stats.height = m.h;
     this.stats.heapMiB = Math.round(m.heap / 1048576);
     this.mailbox.receive(m);
+  }
+
+  // --- audio ---------------------------------------------------------------
+
+  /** The AudioContext is created here, in the Play click (a user gesture), and resumed on later gestures. */
+  private setupAudio(): void {
+    try {
+      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      const ctx = new Ctor({ latencyHint: 'interactive' });
+      this.audio = new AudioEngine(ctx as unknown as ContextLike);
+      this.audio.setVolume(this.volume);
+      const update = () => (this.stats.audioState = ctx.state);
+      ctx.addEventListener('statechange', update);
+      update();
+      void this.audio.resume();
+      const resume = () => void this.audio?.resume();
+      for (const ev of ['pointerdown', 'keydown'] as const) {
+        window.addEventListener(ev, resume);
+        this.cleanup.push(() => window.removeEventListener(ev, resume));
+      }
+      this.cleanup.push(() => {
+        this.audio?.dispose();
+        this.audio = null;
+        void ctx.close().catch(() => undefined);
+      });
+    } catch (e) {
+      this.hooks.onLog?.(`no Web Audio: ${String(e)}`);
+    }
+  }
+
+  private volume = 1;
+  /** UI volume 0..1. */
+  setVolume(v: number): void {
+    this.volume = v;
+    this.audio?.setVolume(v);
+  }
+
+  // --- devctl & measurements ---------------------------------------------
+
+  /** Run an upstream devctl verb (`state`, `debug level`, `cmd move 10 10`, ...) in the game; resolves with its reply text. */
+  devctl(line: string, timeoutMs = 10_000): Promise<string> {
+    const id = ++this.ctlSeq;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.ctlWaiting.delete(id);
+        reject(new Error(`devctl '${line}' timed out`));
+      }, timeoutMs);
+      this.ctlWaiting.set(id, (text) => {
+        clearTimeout(timer);
+        resolve(text);
+      });
+      this.send({ t: 'ctl', id, line });
+    });
+  }
+
+  /** Start a new measurement window (see perf()). */
+  perfReset(): void {
+    this.frameTimes = [];
+  }
+
+  /** Frame rate and hitches since perfReset(), from the arrival times of the game's frames. */
+  perf(): PerfSample {
+    const t = this.frameTimes;
+    const gaps: number[] = [];
+    for (let i = 1; i < t.length; i++) gaps.push(t[i]! - t[i - 1]!);
+    const seconds = t.length > 1 ? (t[t.length - 1]! - t[0]!) / 1000 : 0;
+    const sorted = [...gaps].sort((a, b) => a - b);
+    return {
+      frames: t.length,
+      seconds,
+      fps: seconds > 0 ? (t.length - 1) / seconds : 0,
+      p95Gap: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
+      maxGap: sorted[sorted.length - 1] ?? 0,
+      hitches: gaps.filter((g) => g > 100).length,
+      heapMiB: this.stats.heapMiB,
+    };
   }
 
   /** Call once per animation frame while the game is the active mode. */
@@ -144,12 +266,18 @@ export class FullGame {
       this.queue([EV.button, sdlButton(e.button), 1, p.x, p.y, 0]);
       e.preventDefault();
     });
-    on('pointerup', (e) => {
+    const release = (e: PointerEvent) => {
       const p = this.pos(e);
       this.motion = null;
       this.queue([EV.motion, p.x, p.y, 0, 0, 0]);
       this.queue([EV.button, sdlButton(e.button), 0, p.x, p.y, 0]);
       e.preventDefault();
+    };
+    on('pointerup', release);
+    // a cancelled / lost capture must not leave the button held down in the game
+    on('pointercancel', release);
+    on('lostpointercapture', (e) => {
+      if (e.buttons !== 0) release(e);
     });
     on('wheel', (e) => {
       const p = this.pos(e);
@@ -170,9 +298,13 @@ export class FullGame {
       if (shouldPreventDefault(e)) e.preventDefault();
     });
     // losing focus must not leave keys or buttons stuck down
-    on('blur', () => this.queue([EV.blur, 0, 0, 0, 0, 0]));
+    on('blur', () => {
+      this.queue([EV.blur, 0, 0, 0, 0, 0]);
+      this.flushInput();
+    });
     const onHide = () => {
       this.queue([EV.blur, 0, 0, 0, 0, 0]);
+      this.flushInput(); // a hidden page gets no animation frames: send now
       this.send({ t: 'flush' });
     };
     window.addEventListener('pagehide', onHide);
@@ -189,13 +321,18 @@ export class FullGame {
     this.queue(r);
   }
 
-  /** Ask the game to flush its saves, then stop. */
-  stop(): void {
-    this.send({ t: 'flush' });
+  /**
+   * Quit the game (it saves the character), wait until the worker has written IndexedDB (or a timeout), then drop
+   * the worker, so two workers never touch IDBFS at once.
+   */
+  async stop(timeoutMs = 8000): Promise<void> {
     for (const f of this.cleanup.splice(0)) f();
     const w = this.worker;
+    if (!w) return;
+    const done = new Promise<void>((resolve) => this.flushedResolvers.push(resolve));
+    this.send({ t: 'stop' });
+    await Promise.race([done, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
     this.worker = null;
-    // let the IndexedDB write finish before the worker goes away
-    if (w) setTimeout(() => w.terminate(), 1500);
+    w.terminate();
   }
 }

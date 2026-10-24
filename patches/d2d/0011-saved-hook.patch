@@ -1,0 +1,26 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0011: CharacterStore::replace (every character save) calls d2web::saved() after the rename; the page then runs FS.syncfs(false) immediately, so a reload or closed tab right after a save keeps the character. One concern: the save-complete hook.
+
+--- a/components/game/character_store.hpp	2026-10-24 01:54:38
++++ b/components/game/character_store.hpp	2026-10-24 01:54:38
+@@ -30,6 +30,10 @@
+ #include <utility>
+ #include <vector>
+ 
++#ifdef D2WEB
++#  include <d2web.hpp>   // browser build: d2web::saved()
++#endif
++
+ namespace d2d::game {
+ 
+ struct CharacterStore {
+@@ -99,6 +103,9 @@
+             if (!file_out) return "couldn't write " + tmp.string();
+         }
+         fs::rename(tmp, file, error);
++#ifdef D2WEB
++        if (!error) d2web::saved();   // the page flushes IndexedDB now, not on its next timer
++#endif
+         return error ? "couldn't replace " + file.string() + ": " + error.message() : std::string{};
+     }
+ };

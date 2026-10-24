@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0009: main.cpp frame loop drains the page's input queue (d2web::pump_input -> SDL_PushEvent, the same path devctl uses) once per frame, before SDL_PollEvent.
 
 --- a/apps/d2d/main.cpp

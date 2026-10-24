@@ -45,6 +45,35 @@ describe('FramePool', () => {
     expect(pool.want).toBe(2); // capped
   });
 
+  it('does not spend a credit on a dropped frame (no free buffer)', () => {
+    const { posted, pool, heap } = setup();
+    pool.submit(heap, 0, 1, 1);
+    pool.submit(heap, 0, 1, 1);
+    expect(pool.want).toBe(0);
+    pool.recycle(null, true); // credit without a buffer: both buffers still in flight
+    expect(pool.want).toBe(1);
+    expect(pool.submit(heap, 0, 1, 1)).toBe(false); // dropped
+    expect(pool.want).toBe(1); // nothing leaked
+    expect(posted).toHaveLength(2);
+  });
+
+  it('a superseded buffer returns without a credit (hidden tab stays paused)', () => {
+    const { posted, pool, heap } = setup();
+    pool.submit(heap, 0, 1, 1);
+    pool.submit(heap, 0, 1, 1);
+    const back: { buf: ArrayBuffer | null; want: boolean }[] = [];
+    const box = new FrameMailbox((buf, want) => {
+      back.push({ buf, want });
+      pool.recycle(buf, want);
+    });
+    box.receive(posted[0]!); // page hidden: frames arrive, no animation frame runs
+    box.receive(posted[1]!); // supersedes the first
+    expect(back).toEqual([{ buf: posted[0]!.buf, want: false }]);
+    expect(pool.wanted).toBe(false); // still paused
+    box.flush(() => undefined); // tab visible again: shown, the next frame is requested
+    expect(pool.wanted).toBe(true);
+  });
+
   it('reallocates when the frame size changes (widescreen)', () => {
     const { posted, pool, heap } = setup();
     pool.submit(heap, 0, 2, 2);
@@ -57,7 +86,11 @@ describe('FramePool', () => {
 describe('FrameMailbox', () => {
   it('shows only the newest frame and hands superseded buffers back', () => {
     const back: (ArrayBuffer | null)[] = [];
-    const box = new FrameMailbox((b) => back.push(b));
+    const wants: boolean[] = [];
+    const box = new FrameMailbox((b, w) => {
+      back.push(b);
+      wants.push(w);
+    });
     const a = new ArrayBuffer(4);
     const b = new ArrayBuffer(4);
     box.receive({ t: 'frame', w: 1, h: 1, buf: a, heap: 0 });
@@ -66,6 +99,7 @@ describe('FrameMailbox', () => {
     const shown: number[] = [];
     expect(box.flush((w) => shown.push(w))).toBe(true);
     expect(back).toEqual([a, b]);
+    expect(wants).toEqual([false, true]);
     expect(box.flush((w) => shown.push(w))).toBe(false);
     expect(shown).toEqual([1]);
     expect(box.dropped).toBe(1);

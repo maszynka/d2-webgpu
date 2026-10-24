@@ -1,3 +1,4 @@
+SPDX-License-Identifier: GPL-3.0-or-later
 d2full 0008: the two SDL_UpdateTexture/RenderTexture/RenderPresent sites (main.cpp:491 boot loop, :1402 frame loop) call d2web::present(rgba, w, h) instead (copy into a pooled ArrayBuffer, postMessage to the main thread's WebGPU blit).
 
 --- a/apps/d2d/main.cpp
