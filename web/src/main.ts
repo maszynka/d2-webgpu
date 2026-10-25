@@ -21,6 +21,7 @@ import { register as registerFsrcnnx } from './gpu/upscale/fsrcnnx';
 import { registerStage, STAGE_MODES, unregisterStage } from './gpu/upscale/registry';
 import { register as registerSmooth } from './gpu/upscale/smooth';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
+import { FSR_BUDGET_MS, FsrAutoCheck, initialAutoMode } from './gpu/autoquality';
 import { bindDivider } from './ui/divider';
 import { bindLoupe } from './ui/loupe';
 import { bindHud } from './ui/hud';
@@ -195,6 +196,23 @@ async function main(): Promise<void> {
   registerSmooth(registerStage, () => ({ dedither: renderer.dedither }));
   registerFsrcnnx(registerStage);
   const presentCtl = bindPresentControls(renderer, params);
+  // FSR1 by default where the GPU carries it; the viewer's own pick (select, ?present=, storage) always wins
+  const fsrAuto = new FsrAutoCheck();
+  let fsrAutoSeen = -1;
+  if (presentCtl.auto && initialAutoMode(renderer.adapterInfo.isFallback) === 'bilinear') {
+    presentCtl.setAutoMode('bilinear', 'Auto: bilinear (software WebGPU adapter, FSR1 would be too slow)');
+    fsrAuto.cancel();
+  }
+  const checkFsrAuto = (): void => {
+    if (fsrAuto.decided) return;
+    if (!presentCtl.auto) return fsrAuto.cancel();
+    if (renderer.presentCount === fsrAutoSeen) return; // a repaint-free frame carries the last info again
+    fsrAutoSeen = renderer.presentCount;
+    const v = fsrAuto.feed(renderer.lastPresent);
+    if (!v) return;
+    console.info(`auto upscaler: FSR1 EASU+RCAS ${v.ms.toFixed(1)} ms (budget ${FSR_BUDGET_MS} ms) -> ${v.kind}`);
+    if (v.kind === 'downgrade') presentCtl.setAutoMode('bilinear', `Auto: bilinear (FSR1 took ${v.ms.toFixed(1)} ms per frame on this GPU)`);
+  };
   const loupeCtl = bindLoupe(renderer, canvas, params);
   const hud = bindHud(params, readStored, writeStored, presentCtl.compare.on);
   presentCtl.onChange(() => {
@@ -651,6 +669,7 @@ async function main(): Promise<void> {
   const frame = (now: number): void => {
     publishUi();
     hud.update(now, renderer.presentCount, full ? full.stats.frames : null, renderer.lastPresent);
+    checkFsrAuto();
     if (full) {
       full.tick();
       if (renderer.presentDirty) renderer.repaint(); // divider / loupe / mode changed between game frames
