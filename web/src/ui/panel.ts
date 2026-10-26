@@ -145,7 +145,9 @@ export class Panel {
     this.playBtn.addEventListener('click', () => void this.run(async () => h.onPlay()));
     this.mode.addEventListener('change', () => {
       const m = this.mode.value as ModeName;
-      if (m === 'play') void this.run(async () => h.onPlay());
+      if (m === 'play') {
+        if (!this.isPlaying) void this.run(async () => h.onPlay()); // already playing (back from a viewer / map pick): keep it
+      }
       else if (m === 'demo') h.onDemo();
       else this.togglePopover(this.tools, true);
     });

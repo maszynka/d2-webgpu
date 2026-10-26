@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Serves the static assets (app, wasm, the source archive). Optional HTTP Basic auth gate: when the SITE_PASSWORD
 // secret is set, every request needs it (e.g. a private staging deploy); without it the site is public.
-// POST /api/visit counts a page load (web/src/analytics/visit.ts) into Workers Analytics Engine.
+// POST /api/visit counts a page load (web/src/analytics/visit.ts) into Workers Analytics Engine; /admin shows the counts
+// (worker/admin.ts, its own password).
 
 import { VISIT_PATH, parseReport, parseUserAgent } from '../web/src/analytics/visit';
+import { ADMIN_HTML, adminEnabled, adminStats, type AdminEnv } from './admin';
 
 interface AnalyticsDataset {
   writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
 }
 
-interface Env {
+interface Env extends AdminEnv {
   ASSETS: { fetch(request: Request): Promise<Response> };
   SITE_PASSWORD?: string;
   VISITS?: AnalyticsDataset;
@@ -66,10 +68,30 @@ function passwordFrom(header: string | null): string | null {
   }
 }
 
+const ADMIN_HEADERS = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' };
+
+async function admin(request: Request, env: Env, url: URL): Promise<Response> {
+  if (!adminEnabled(env)) return new Response('Not found', { status: 404, headers: ADMIN_HEADERS });
+  const given = passwordFrom(request.headers.get('Authorization'));
+  if (given === null || !(await sameSecret(given, env.ADMIN_PASSWORD!))) {
+    return new Response('Password required', {
+      status: 401,
+      headers: { ...ADMIN_HEADERS, 'WWW-Authenticate': 'Basic realm="d2-webgpu admin", charset="UTF-8"' },
+    });
+  }
+  if (url.pathname === '/admin' || url.pathname === '/admin/') {
+    return new Response(ADMIN_HTML, { headers: { ...ADMIN_HEADERS, 'Content-Type': 'text/html; charset=utf-8', 'X-Frame-Options': 'DENY' } });
+  }
+  if (url.pathname === '/admin/api/stats' && request.method === 'GET') return adminStats(env, url);
+  return new Response('Not found', { status: 404, headers: ADMIN_HEADERS });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin(request, env, url);
     // gated deploys aren't counted and keep the endpoint behind the password like everything else
-    if (!env.SITE_PASSWORD && new URL(request.url).pathname === VISIT_PATH) return countVisit(request, env);
+    if (!env.SITE_PASSWORD && url.pathname === VISIT_PATH) return countVisit(request, env);
     if (!env.SITE_PASSWORD) {
       // public; kept out of search results until the project is announced
       const response = await env.ASSETS.fetch(request);

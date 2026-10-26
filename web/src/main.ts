@@ -560,7 +560,10 @@ async function main(): Promise<void> {
     panel.setStatus(`Loading ${path}...`);
     const data = await loadMapData(core, path);
     const pal = actPalette;
-    if (!confirmLeaveGame()) return;
+    if (!confirmLeaveGame()) {
+      panel.setStatus('Map not opened: the game keeps running.');
+      return;
+    }
     await stopForScene();
     const map = switchScene(
       () => renderer.resetAtlas(),
