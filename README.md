@@ -21,8 +21,8 @@ Diablo II: Lord of Destruction running in a browser tab: the open-source engine 
 1. Open the page and choose your Diablo II folder (or drop it on the page). On Chromium the folder handle is remembered,
    so later visits need one click to reconnect.
 2. The game starts in the page. The top bar hides while you play; move the pointer to the top edge to bring it back.
-3. Display options: upscaler (FSR1 by default when your GPU handles it in time, otherwise bilinear; also nearest,
-   sharp-bilinear, ScaleFX, Super-xBR, FSRCNNX), a side-by-side **Compare** with a draggable divider, a pixel loupe,
+3. Display options: upscaler (FSR1 by default when your GPU handles it in time, otherwise bilinear; also FSR1 pixel-art,
+   nearest, ScaleFX, Super-xBR, FSRCNNX; menus and HUD use sharp bilinear), a side-by-side **Compare** with a draggable divider, a pixel loupe,
    a HUD with GPU timings, fullscreen (Alt+Enter).
 
 Saves live in the browser's IndexedDB for that site.
@@ -82,7 +82,7 @@ reviewed by the author. Plans and reviews are kept in `docs/`.
 
 ## Legal
 
-* Licence: **GPL-3.0-or-later** ([LICENSE](LICENSE)), because the project compiles and links d2decomped (GPL-3.0).
+* Licence: **GPL-3.0-or-later** ([LICENSE](LICENSE)), because the project compiles and links d2decomped (GPL-3.0-or-later).
   Third-party parts keep their own licences ([LICENSES/](LICENSES/), [CREDITS.md](CREDITS.md)).
 * Diablo® and Blizzard Entertainment® are trademarks or registered trademarks of Blizzard Entertainment, Inc. This
   project is not affiliated with, endorsed or sponsored by Blizzard Entertainment. It contains no Blizzard game files,

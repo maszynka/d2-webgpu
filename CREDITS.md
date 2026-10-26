@@ -9,7 +9,7 @@ are in [LICENSES/](LICENSES/); each ported file also names its source in its hea
 
 | Project | Authors | Licence | How it is used |
 |---|---|---|---|
-| [d2decomped](https://github.com/psi29a/d2decomped) | Bret Curtis (psi29a) and contributors | GPL-3.0 | **The game itself.** A clean-room C++ reimplementation of Diablo II: LoD 1.14d. Vendored unmodified as the submodule `third_party/d2decomped` (pinned `7e730f0`); compiled to WASM with our patches (`patches/d2d/`) and shims (`wasm/full/shim/`) applied to a copy at build time. Its file-format parsers (palette, DC6, DT1, DS1, MPQ) power the asset viewer and map modes. |
+| [d2decomped](https://github.com/psi29a/d2decomped) | Bret Curtis (psi29a) and contributors | GPL-3.0-or-later | **The game itself.** A C++ reimplementation of Diablo II: LoD 1.14d (reverse-engineered with Ghidra, checked against the original with Unicorn). Vendored unmodified as the submodule `third_party/d2decomped` (pinned `7e730f0`); compiled to WASM with our patches (`patches/d2d/`) and shims (`wasm/full/shim/`) applied to a copy at build time. Its file-format parsers (palette, DC6, DT1, DS1, MPQ) power the asset viewer and map modes. |
 
 ## Libraries in the WASM build
 
@@ -42,8 +42,8 @@ OpenAL is not linked: `wasm/full/shim/AL/` is our own small OpenAL-shaped shim t
 
 ## Front-end tooling (development only, not shipped as code)
 
-TypeScript, Vite, Vitest, Playwright, ESLint, `@webgpu/types`, pngjs, and Cloudflare Wrangler for deployment. Each under
-its own licence (MIT or Apache-2.0); see `web/package.json`.
+TypeScript, Vite, Vitest, Playwright, ESLint, `@webgpu/types`, pngjs (see `web/package.json`), and Cloudflare Wrangler, run by
+`scripts/deploy.sh`. Each under its own licence (MIT or Apache-2.0).
 
 ## Game data
 
