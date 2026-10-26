@@ -63,6 +63,7 @@ export class FullGame {
   private readonly ctlWaiting = new Map<number, (text: string) => void>();
   private frameTimes: number[] = [];
   private readonly flushedResolvers: (() => void)[] = [];
+  private readonly syncedResolvers: (() => void)[] = [];
 
   constructor(
     private readonly renderer: Renderer,
@@ -150,6 +151,7 @@ export class FullGame {
         break;
       case 'synced':
         this.stats.synced = m.saves;
+        this.syncedResolvers.splice(0).forEach((r) => r());
         break;
       case 'status':
         this.stats.status = m.text;
@@ -370,6 +372,14 @@ export class FullGame {
   /** Push a raw input record (tests, scripted menus). */
   inject(r: InputRecord): void {
     this.queue(r);
+  }
+
+  /** Ask the worker to write the user dir to IndexedDB now; resolves after the next completed write (or a timeout). */
+  async flushSaves(timeoutMs = 3000): Promise<void> {
+    if (!this.worker || this.stats.exited !== null) return;
+    const done = new Promise<void>((resolve) => this.syncedResolvers.push(resolve));
+    this.send({ t: 'flush' });
+    await Promise.race([done, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
   }
 
   /**

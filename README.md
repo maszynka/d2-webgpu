@@ -25,7 +25,9 @@ Diablo II: Lord of Destruction running in a browser tab: the open-source engine 
    nearest, ScaleFX, Super-xBR, FSRCNNX; menus and HUD use sharp bilinear), a side-by-side **Compare** with a draggable divider, a pixel loupe,
    a HUD with GPU timings, fullscreen (Alt+Enter).
 
-Saves live in the browser's IndexedDB for that site.
+Saves live in the browser's IndexedDB for that site. **⚙ Tools → Saves** downloads a backup (a ZIP of every character
+and the game settings) and imports one; it also takes `.d2s` characters from the original game (1.09 to 1.14d, with
+their `.key` / `.ma0`-`.ma3` files).
 
 ## How it works
 

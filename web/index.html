@@ -90,6 +90,12 @@
             </label>
             <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" value="0.16" /> <output id="ambient-val">0.16</output></label>
           </div>
+          <div class="row" id="save-tools">
+            <span class="k">Saves</span>
+            <button id="saves-export" type="button" title="Download every character and the game settings as a ZIP">Download backup</button>
+            <button id="saves-import" type="button" title="A backup ZIP, or .d2s character files (with .key / .ma0-.ma3) from the original game">Import saves&hellip;</button>
+            <input id="saves-file" type="file" multiple accept=".zip,.d2s,.key,.ma0,.ma1,.ma2,.ma3" hidden />
+          </div>
           <div class="row">
             <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
             <label><input id="autoplay" type="checkbox" checked /> start the game after picking files</label>
@@ -132,6 +138,7 @@
                 <a href="https://eu.shop.battle.net/en-us/product/diablo-ii-lord-of-destruction?p=462" target="_blank" rel="noopener noreferrer">Diablo II: Lord of Destruction</a>.
                 Or search for deals on sites like <a href="https://gg.deals/search/pc/?title=diablo+2" target="_blank" rel="noopener noreferrer">gg.deals</a>.</p>
             </details>
+            <p class="dim">Characters are saved in this browser. Back them up, or bring in saves from the original game (1.09&ndash;1.14d), under &#9881; Tools &rarr; Saves.</p>
           </section>
         </div>
         <div id="drop" class="overlay" hidden><div class="card">Drop your Diablo II folder here</div></div>
