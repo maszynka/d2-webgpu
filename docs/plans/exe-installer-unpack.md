@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Plan: instalator `.exe` → MPQ rozpakowane w przeglądarce
 
+> **Dropped 2026-10-26.** The demo option is cancelled (see `demo-estimate.md`); the page only loads the viewer's own game files.
+
 Status: **projekt v1 (przed review)** · 2026-10-25 · autor: Claude
 
 ## Cel
@@ -9,7 +11,7 @@ Użytkownik podaje stronie instalator Diablo II (`.exe`): plik z dysku, upuszczo
 
 ## Kluczowe ustalenie: innoextract-wasm nie obsłuży instalatorów Blizzarda
 
-Sprawdzone 2026-10-25 na `~/Downloads/DiabloIIDemo.exe` (138 MB):
+Sprawdzone 2026-10-25 na lokalnej kopii `DiabloIIDemo.exe` (138 MB):
 
 | Test | Wynik |
 |---|---|

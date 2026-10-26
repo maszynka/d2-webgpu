@@ -34,8 +34,7 @@ Most of the older design docs (`PLAN.md`, `PLAN-full-game.md`, `full-game-status
 
 "FSR" is an AMD trademark; in code the modules are named `easu`/`rcas`.
 
-The comparison of Diablo II engine rewrites that led to choosing d2decomped lives **outside this repo**:
-`~/projects/3rd-party/diablo-2-engine-rewrites/COMPARISON.md`.
+The comparison of Diablo II engine rewrites that led to choosing d2decomped lives **outside this repo** (a private note).
 
 ## 3. How it was built
 

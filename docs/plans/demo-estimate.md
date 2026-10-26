@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Estimate: playable official Diablo II demo + demo/full-game choice
 
-Status: estimate · 2026-10-25 · based on 4 read-only scopes (Haiku agents) of upstream d2decomped `12a04e1` (v0.6.0-5) and the demo `DiabloIIDemo.exe` (archive.org, 138 309 685 B, MD5 `9ae5033551a078937cd5d1f388cd8438`). Raw reports: session scratchpad `scope/{tables,assets,code,rebase}.md` (not in the repo).
+Status: **dropped 2026-10-26** (owner: keep only the load-files button; no demo option). Kept as a record. · estimate 2026-10-25 · based on 4 read-only scopes (Haiku agents) of upstream d2decomped `12a04e1` (v0.6.0-5) and the demo `DiabloIIDemo.exe` (archive.org, 138 309 685 B, MD5 `9ae5033551a078937cd5d1f388cd8438`). Raw reports: session scratchpad `scope/{tables,assets,code,rebase}.md` (not in the repo).
 
 ## What the demo is
 

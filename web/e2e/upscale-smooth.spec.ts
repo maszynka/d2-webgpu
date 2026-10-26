@@ -9,7 +9,7 @@ import { createServer, type ViteDevServer } from 'vite';
 import { checkerboardDeditherReference, fromRgba8, stripeCheckerReference, superXbrReference, toRgba8 } from '../src/gpu/upscale/reference';
 import { IMAGES } from '../test-pages/images';
 
-const shotDir = process.env['D2_UP_SHOT_DIR'] ?? '/private/tmp/claude-501/-Users-danielbogusz-projects/8d63eb78-aef8-433a-9d2e-12e9bacdc5f2/scratchpad';
+const shotDir = process.env['D2_UP_SHOT_DIR'] ?? 'test-results/upscale-smooth';
 
 interface Img {
   w: number;

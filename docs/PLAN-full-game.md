@@ -6,7 +6,7 @@ Podstawa: `docs/research/full-game-port.md` (analiza + probe), `docs/research/po
 
 ## Cel
 Pełna gra single player d2decomped (menu, tworzenie postaci, obóz, walka, ekwipunek, questy aktów I–IV, dźwięk, muzyka, zapisy) w przeglądarce,
-na danych użytkownika (`~/Downloads/diablo 2`, wersja patcha ~1.13c, upstream celuje w 1.14d). Strona prywatna (hasło), użytek osobisty.
+na danych użytkownika (lokalna instalacja, wersja patcha ~1.13c, upstream celuje w 1.14d). Strona prywatna (hasło), użytek osobisty.
 
 ## Decyzje
 1. **Cały `apps/d2d` kompilowany Emscriptenem** (opcja A z researchu), nie przepisywany. Submodule nadal niemodyfikowany:

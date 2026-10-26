@@ -106,7 +106,7 @@ Punkty wejścia upstreamu, na których oracle się opiera (czysty sim bez SDL):
 | L3 GameData | hash każdej tabeli po załadowaniu (`rules::Tables`, `GameData`) | prawdziwe MPQ | nightly + lokalnie | MPQ |
 | L4 przypadki jednostkowe | `.inc` -> JSON: `mon_ais_cases` (997), `mon_ais3` (710), `mon_ais4` (552), `pet_ais_cases` (127), `shadow_*` (703), `diablo_score` (401), `jarjar` (65) + `test_*.cpp` | `tests/` upstreamu | PR (większość syntetyczna) | node |
 | L5 scenariusze | hash stanu co tick; strumień komend JSONL (`Move/UseSkill/Interact/...`) z nagrań (`tests/smoke_d2d.py`, `quests_d2d.py`, ręczne) + fuzz losowych komend | MPQ | nightly | MPQ |
-| L6 dekodery | hash pikseli klatek DCC/DC6/DT1/paleta na prawdziwych MPQ | tylko jeśli portujemy formaty (W8.5) | lokalnie | `/Users/danielbogusz/Downloads/diablo 2` |
+| L6 dekodery | hash pikseli klatek DCC/DC6/DT1/paleta na prawdziwych MPQ | tylko jeśli portujemy formaty (W8.5) | lokalnie | `$D2_MPQ_DIR` |
 
 MPQ są tylko lokalne (nigdy w repo/CI, `PLAN.md` decyzja 2). Ścieżka przez `D2_MPQ_DIR`; testy bez MPQ wypisują `skipped` jak upstream (`tests/README.md`).
 Nightly = lokalny runner (laptop/komputer z MPQ), wynik jako raport w repo (bez danych gry).

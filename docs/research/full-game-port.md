@@ -191,14 +191,14 @@ automatycznie, ~48 s), `-std=c++2c -fwasm-exceptions`, bez `-Werror`.
 | `-fsyntax-only` na `components/game/*.cpp` (11 plików), `net/*` (7), `devctl`, `install`, `screenshot` | **0 błędów** |
 | `main.cpp` | niesprawdzone: wymaga CLI11 (FetchContent), `sentry.h`, nagłówków FFmpeg (nie pobierano z sieci); znane do usunięcia/zaślepienia (`main.cpp:46-50`, `video.hpp`) |
 | Pełna kompilacja -O1 33 TU + link (`-lopenal --use-port=sdl3 -sUSE_ZLIB -sUSE_BZIP2 -sJSPI=1`, StormLib z `build-wasm`) | kompilacja ~549 s, **link OK, 0 undefined symbols**, `probe.wasm` 799 KB (bez `main`, DCE) |
-| Gotowe `.o`, skrypt | `/private/tmp/claude-501/-Users-danielbogusz-projects/8d63eb78-aef8-433a-9d2e-12e9bacdc5f2/scratchpad/p/` (probe.sh) — nie w repo |
+| Gotowe `.o`, skrypt | katalog roboczy sesji (probe.sh) — nie w repo |
 
 Wniosek sondy: nie ma twardych blokerów kompilacji; ryzyko leży w runtime (wątki, pętla, pamięć,
 audio w workerze).
 
 ## 4. Dane / legal / budżet pamięci
 
-### Wersja gry (z `Patch_D2.mpq` w `/Users/danielbogusz/Downloads/diablo 2`)
+### Wersja gry (z `Patch_D2.mpq` lokalnej instalacji)
 `Patch_D2.mpq`: 2 108 703 B, MD5 `b4227509947bf51b9eaec599e2a8f5fa`, 209 plików — **nie zgadza się
 z żadnym patchem z `pvpgn-diablo2/` (md5 1.14d = `3047048d...`, 15 986 478 B)**. Porównanie przez StormLib:
 * Rozmiary wszystkich 209 plików są podzbiorem 1.13c (214 plików); z 1.13d/1.14a/1.14d wspólnych 200/209.
@@ -331,5 +331,5 @@ do pełnego single-playera, faza 6 = osobny projekt (tygodnie+).
 * `apps/d2d/main.cpp`, `window.hpp/.cpp`, `audio.hpp`, `video.hpp`, `load.cpp`, `town.cpp`, `netgame.cpp`, `controls.cpp`, `gamepad.cpp`
 * `components/mpq/mpq.hpp`, `components/game/gamedata.cpp`, `gamedata_load.cpp`, `components/userdir/userdir.hpp`, `components/devctl/devctl.cpp`
 * `docs/design/rendering.md`, `docs/PLAN.md`, `docs/toolchain.md`, `wasm/CMakeLists.txt` (projekt d2-webgpu)
-* Dane: `/Users/danielbogusz/Downloads/diablo 2/` (7 MPQ + `Patch_D2.mpq`; `pvpgn-diablo2/` z `1.07 ... 1.14d`, `md5.txt`)
-* Sonda: `/private/tmp/claude-501/-Users-danielbogusz-projects/8d63eb78-aef8-433a-9d2e-12e9bacdc5f2/scratchpad/p/` (skrypty, logi, `probe.wasm`)
+* Dane: lokalna instalacja (7 MPQ + `Patch_D2.mpq`; `pvpgn-diablo2/` z `1.07 ... 1.14d`, `md5.txt`)
+* Sonda: katalog roboczy sesji, poza repo (skrypty, logi, `probe.wasm`)
