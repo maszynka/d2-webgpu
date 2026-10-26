@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // DOM glue for the bar's game-files controls: folder picker / fallback input / drop / reconnect, Play, the status line,
 // the progress strip, the missing-archives card, and the three popovers (Display, Tools with the scene select, About)
-// (index.html, docs/design/ui.md 2.10).
+// (index.html).
 
 import { DEFAULT_MAP, KNOWN_PALETTES, KNOWN_PATHS, ACT1_PALETTE } from '../assets/mpq';
 import {

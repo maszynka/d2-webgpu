@@ -2,7 +2,7 @@
 // Registry of the world-scaler stages (dedither + ScaleFX / Super-xBR, FSRCNNX). Each stage module calls
 // registerStage(mode, factory) with a concrete mode id; the renderer asks resolveStageMode() which concrete stage runs
 // for a presentation mode at a given scale and builds it lazily through createStage(). A mode without a factory is
-// "not available": the UI lists it disabled and planPresent falls back to FSR1. See docs/plans/upscalers.md.
+// "not available": the UI lists it disabled and planPresent falls back to FSR1.
 import type { UpscaleStage } from './stage';
 
 /** presentation modes that run a stage: 'smooth' is the auto choice between the two concrete smooth stages */

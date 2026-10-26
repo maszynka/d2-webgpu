@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Surface descriptor of a draw record (docs/lighting.md): what the pixels of a sprite are, so the lighting pass
+// Surface descriptor of a draw record: what the pixels of a sprite are, so the lighting pass
 // can light them. Packed into the aux byte as `AUX_DRAWN | kind << 4 | normal` (bit 7 = "a sprite pixel was written
 // here", bits 4..6 = kind, bits 0..3 = normal slot). The aux target is cleared to 0, so aux 0 means "nothing drawn"
 // (background) and a drawn pixel with palette index 0 (true black after a colormap) is still distinguishable.

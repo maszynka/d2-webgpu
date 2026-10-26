@@ -49,8 +49,7 @@ jobs:
       - name: Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          # docs/toolchain.md was written against Emscripten 6.0.13 (C++2c, -fwasm-exceptions with the legacy
-          # encoding, ports for zlib/bzip2).
+          # the build is tested with Emscripten 6.0.13 (C++2c, -fwasm-exceptions with the legacy encoding)
           version: 6.0.13
           actions-cache-folder: emsdk-cache
       - run: emcc --version

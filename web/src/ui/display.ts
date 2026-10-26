@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The upscaling strip (#upscale: world upscaler, sharpness, Compare and its A/B controls) sits in the bar while the bar
 // has room for it and moves into the Display popover's first row when it would overflow (narrow windows, or compare on
-// at a middling width). The elements move, they are never cloned, so ids, listeners and state stay (docs/design/ui.md 2.10).
+// at a middling width). The elements move, they are never cloned, so ids, listeners and state stay.
 
 export interface StripLayout {
   /** true while the strip lives in the popover */

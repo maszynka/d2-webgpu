@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Frame hand-off between the game worker and the main thread (docs/full-game-status.md).
+// Frame hand-off between the game worker and the main thread.
 // Two standalone ArrayBuffers ping-pong: the worker copies a frame out of the wasm heap into the free
 // one and transfers it; the main thread uploads it and transfers it back. The heap's own buffer is never
 // transferred. A mailbox counter ("frame wanted") gates the worker: it only runs a frame while the page

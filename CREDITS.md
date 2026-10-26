@@ -33,12 +33,12 @@ OpenAL is not linked: `wasm/full/shim/AL/` is our own small OpenAL-shaped shim t
 | Checkerboard Dedither (libretro slang-shaders) | Hyllian | MIT | `web/src/gpu/upscale/dedither.wgsl` (passes 1-3; the stripe detector `fsLines` is ours) |
 | [FSRCNNX](https://github.com/igv/FSRCNN-TensorFlow) x2 8-0-4-1 (network and trained weights) | igv | LGPL-3.0-or-later | `web/src/gpu/shaders/fsrcnnx.wgsl`, `web/src/gpu/upscale/fsrcnnx*.ts`, weights in `web/public/fsrcnnx-8-0-4-1.bin` (extracted by `scripts/fsrcnnx-extract.mjs`) |
 
-## Looked at, nothing copied
+## Inspiration (no code used)
 
-| Project | Licence | What we took |
-|---|---|---|
-| AbyssEngine | MIT | Reference for MPQ/DC6 handling and the menu scene. No code. |
-| DamnationX | Sustainable Use License (not GPL-compatible) | The idea of G-buffer lighting only (palette index + surface kind, light in a separate pass); written from scratch without reading its sources during implementation (`docs/lighting.md`). No code. |
+| Project | For |
+|---|---|
+| AbyssEngine | MPQ/DC6 handling, the menu scene |
+| DamnationX | G-buffer lighting (palette index + surface kind, light in a separate pass) |
 
 ## Front-end tooling (development only, not shipped as code)
 
@@ -52,5 +52,4 @@ installation, locally in the browser. Nothing from them is committed, hosted, up
 
 ## This project
 
-Written by Daniel Bogusz with AI coding agents (Anthropic Claude as the main author of code and docs; Google Gemini and
-Claude as reviewers). Licence: GPL-3.0-or-later.
+Written by Daniel Bogusz with AI coding agents (Anthropic Claude; Google Gemini as a reviewer). Licence: GPL-3.0-or-later.

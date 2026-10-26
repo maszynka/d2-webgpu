@@ -387,7 +387,7 @@ async function main(): Promise<void> {
   setDebug(params.get('debug') === '1' || (params.get('debug') === null && lsGet('d2.debug') === '1'), false);
   $('debug-btn').addEventListener('click', () => setDebug(debug.hidden !== false));
 
-  // --- page hotkeys: one capture listener, ahead of the game's own (docs/design/ui.md 2.5) ------------------
+  // --- page hotkeys: one capture listener, ahead of the game's own ------------------
   const swallowed = new Set<string>();
   window.addEventListener(
     'keydown',

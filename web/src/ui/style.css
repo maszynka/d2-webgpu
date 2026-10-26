@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Page chrome: a 32 px bar over a surface that fills the rest of the page (docs/design/ui.md). */
+/* Page chrome: a 32 px bar over a surface that fills the rest of the page. */
 :root {
   color-scheme: dark;
   --bar-h: 32px;

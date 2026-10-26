@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Paletted sprite pass writing the G-buffer (docs/lighting.md):
+// Paletted sprite pass writing the G-buffer:
 //   0 index  rg8uint r = palette index after the colormap row (0 is a real colour; see aux), g = palette row of the record
 //   1 aux    r8uint  AUX_DRAWN | kind << AUX_KIND_SHIFT | normal slot (0 = nothing drawn)
 //   2 height r16uint height of the pixel above the ground, px (ground position = (x, y + height))

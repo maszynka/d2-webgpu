@@ -198,7 +198,7 @@ export function wallClass(type: number): { layer: Layer; orientation: number } {
 // --- lighting surfaces -------------------------------------------------------
 
 /**
- * Lighting surface of a DT1 tile (docs/lighting.md). `topY` = screen y of the cell's top vertex, `roofHeight` = the
+ * Lighting surface of a DT1 tile. `topY` = screen y of the cell's top vertex, `roofHeight` = the
  * tile's roof lift. Same type groups as `wallClass`: left (NW-edge) walls show their SE face, right (NE-edge)
  * walls their SW face, corners are resolved per pixel by the sprite pass (marker normals).
  */

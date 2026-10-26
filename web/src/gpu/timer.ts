@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// GPU pass timing with timestamp queries (optional device feature 'timestamp-query'). Adapted from the Timer in
-// fsr4-web-bench/src/pipeline.ts. Up to `spans` render passes per frame (begin/end each); results arrive asynchronously.
+// GPU pass timing with timestamp queries (optional device feature 'timestamp-query'). Up to `spans` render passes per frame (begin/end each); results arrive asynchronously.
 
 /** What the timed spans of one frame were: per side, a label ("EASU+RCAS") and the span indices that make it up. */
 export interface GpuTag {

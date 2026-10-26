@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Page chrome without game data: the bar, the surface, the debug overlay, presentation controls, fullscreen, hotkeys,
-// drop zone (docs/design/ui.md section 6.4).
+// drop zone.
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 

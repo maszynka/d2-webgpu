@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Node smoke test for d2full (F0): the module loads, main() starts on SDL's dummy
+// Node smoke test for d2full: the module loads, main() starts on SDL's dummy
 // driver and exits cleanly.
 //   node --experimental-wasm-jspi wasm/full/smoke.mjs                       --headless: upstream's own "nothing to do" exit
 //   D2_MPQ_DIR=<dir> node --experimental-wasm-jspi wasm/full/smoke.mjs      real data via NODEFS: boots, runs frames, quit event, clean exit

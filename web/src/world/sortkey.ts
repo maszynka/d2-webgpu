@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Draw-order key (PLAN decision 6): (tileY+tileX, layer, subtileDepth, orientation, seq) packed into u64.
+// Draw-order key: (tileY+tileX, layer, subtileDepth, orientation, seq) packed into u64.
 // Larger key = drawn later (in front). No depth buffer: the CPU sorts by this key.
 
 export const Layer = {

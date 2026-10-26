@@ -41,8 +41,7 @@ your MPQ files ──► Worker: d2decomped (C++ → WASM, SDL3 dummy video, vir
 * `third_party/d2decomped` is an **unmodified** git submodule. Browser-specific changes are applied at build time from
   `patches/d2d/*.patch` and header shims in `wasm/full/shim/`.
 * `web/` is the TypeScript + WebGPU front end (Vite), `worker/` the Cloudflare Worker that serves the static build.
-* More detail: [project record](docs/PROJECT.md), [toolchain notes](docs/toolchain.md),
-  [full-game status](docs/full-game-status.md), [UI design](docs/design/ui.md). Some older planning docs are in Polish.
+* [Benchmarks](docs/benchmarks.md) · [d2core C API / binary layouts](docs/abi.md)
 
 ## Building
 
@@ -70,8 +69,7 @@ at `/source/` on the site.
 ## Status and limits
 
 Acts I to IV, single player, as far as the pinned d2decomped commit goes (Act V is not built upstream yet). Known gaps: no Bink cinematics, no multiplayer or
-gamepad, short hitches when a new level is generated, height fixed at 600 (width 800..1400). See
-[docs/PROJECT.md §6](docs/PROJECT.md#6-known-limitations-and-open-items).
+gamepad, short hitches when a new level is generated, height fixed at 600 (width 800..1400).
 
 ## Credits
 
@@ -79,17 +77,15 @@ This project stands on other people's work. The game engine is **d2decomped** by
 the upscalers are ports of work by AMD, Dennis Smolek (pmndrs), Sp00kyFox, Hyllian and igv. Full list with licences:
 [CREDITS.md](CREDITS.md).
 
-The code here was written with heavy use of AI coding agents (Claude, with Gemini and a second Claude model as reviewers), directed and
-reviewed by the author. Plans and reviews are kept in `docs/`.
+Written with AI coding agents (Claude; Gemini as a reviewer), directed and reviewed by the author.
 
 ## Legal
 
-* Licence: **GPL-3.0-or-later** ([LICENSE](LICENSE)), because the project compiles and links d2decomped (GPL-3.0-or-later).
+* Licence: **GPL-3.0-or-later** ([LICENSE](LICENSE)), like d2decomped, which it compiles and links.
   Third-party parts keep their own licences ([LICENSES/](LICENSES/), [CREDITS.md](CREDITS.md)).
 * Diablo® and Blizzard Entertainment® are trademarks or registered trademarks of Blizzard Entertainment, Inc. This
   project is not affiliated with, endorsed or sponsored by Blizzard Entertainment. It contains no Blizzard game files,
   art, audio or text and does not distribute them; you need your own copy of the game.
-* FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc. The FSR1-derived passes are named `easu`/`rcas` in
-  the code.
+* FidelityFX and FSR are trademarks of Advanced Micro Devices, Inc.
 * For the legal basis of the engine reimplementation itself, see upstream's
   [LEGAL.md](https://github.com/psi29a/d2decomped/blob/main/LEGAL.md).

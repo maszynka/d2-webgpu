@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// WebGPU renderer, PLAN decision 5 + M6 G-buffer lighting (docs/lighting.md):
+// WebGPU renderer with G-buffer lighting:
 // paletted sprites -> G-buffer (index+palette row rg8uint, aux r8uint, height r16uint + blend layer) -> lighting pass -> scene rgba8unorm
 // (native res) -> nearest blit.
 

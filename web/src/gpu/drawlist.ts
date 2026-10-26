@@ -20,7 +20,7 @@ export interface DrawRecord {
   blend: BlendMode;
   colormapRow: number;
   paletteRow: number;
-  /** what the pixels are, for the lighting pass (docs/lighting.md); does not affect the sort key */
+  /** what the pixels are, for the lighting pass; does not affect the sort key */
   surface: Surface;
 }
 

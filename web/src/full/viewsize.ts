@@ -2,7 +2,7 @@
 // The native resolution of the in-game view. Upstream's framebuffer is always 600 rows tall (kScreenHeight, which the
 // HUD, panels and fonts are laid out for) and its width is a runtime value, clamped 800..kMaxViewWidth (1400 =
 // 21:9 and a bit); menus and cinematics are always 800x600. The page picks the width from its display's aspect and posts it
-// (patch 0013: d2web::view_width()); see docs/full-game-status.md "Resolution".
+// (patch 0013: d2web::view_width()).
 export const VIEW_HEIGHT = 600;
 export const MIN_VIEW_WIDTH = 800;
 export const MAX_VIEW_WIDTH = 1400;

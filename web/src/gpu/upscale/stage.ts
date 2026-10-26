@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Shared interface for fixed-ratio prescale stages (dedither + ScaleFX / Super-xBR, FSRCNNX). The renderer runs a stage
 // on the native frame, then resamples its output to the target rect (EASU when upscaling further, area downsample when
-// the stage output is larger than the target). See docs/plans/upscalers.md.
+// the stage output is larger than the target).
 
 /** Optional GPU timestamp hook: returns timestampWrites for a labelled pass, or undefined when not timing. */
 export type PassTimer = (label: string) => GPURenderPassTimestampWrites | GPUComputePassTimestampWrites | undefined;

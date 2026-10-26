@@ -284,7 +284,7 @@ SDL_MouseButtonFlags mouse_state(float* x, float* y) {
 // Threads are compiled out (std::async/jthread sites patched to run inline).
 // Anything that still tries to start one fails loudly here rather than deep in libc.
 extern "C" int pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*) {
-    std::fputs("d2full: pthread_create called, but this build has no threads; a thread site was missed (docs/full-game-status.md)\n", stderr);
+    std::fputs("d2full: pthread_create called, but this build has no threads; a thread site was missed\n", stderr);
     std::abort();
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The welcome cards shown over the test scene until a game folder is open: the browser checks (WebGPU adapter, engine
 // core) on the left, the folder picker on the right. The picker's controls (#pick, #folder-label, #regrant) are the
-// bar's own: they move into the card while it is shown and back in front of Play when it goes (docs/design/ui.md 2.10).
+// bar's own: they move into the card while it is shown and back in front of Play when it goes.
 
 export type CheckId = 'gpu' | 'core';
 export type CheckState = 'pending' | 'ok' | 'fail';
