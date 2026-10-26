@@ -22,7 +22,11 @@ export function bindWelcome(bar: HTMLElement, onMoved: () => void = () => undefi
     if (!slot || !anchor) return;
     const first = controls[0];
     if (!first || (first.parentElement === slot) === inCard) return;
+    // moving a focused node drops focus to <body>: put it back on the same control
+    const active = document.activeElement;
+    const focused = active instanceof HTMLElement && controls.some((c) => c.contains(active)) ? active : null;
     for (const c of controls) (inCard ? slot : bar).insertBefore(c, inCard ? null : anchor);
+    focused?.focus({ preventScroll: true });
     onMoved();
   };
   return {

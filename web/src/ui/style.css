@@ -93,7 +93,7 @@ body.playing canvas#view:focus-visible { outline: none; }
 #game-failed { background: rgb(0 0 0 / 0.4); }
 /* welcome cards (no folder yet): two side by side, one column when narrow; the scene stays draggable between them */
 #welcome { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px;
-  align-content: center; max-width: 760px; margin: 0 auto; padding: 24px; box-sizing: border-box; overflow: auto; pointer-events: none; }
+  align-content: safe center; max-width: 760px; margin: 0 auto; padding: 24px; box-sizing: border-box; overflow: auto; pointer-events: none; }
 #welcome[hidden] { display: none; }
 #welcome .card { position: relative; pointer-events: auto; max-width: none; min-width: 0; }
 #welcome .card p { margin: 8px 0 0; }

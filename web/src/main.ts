@@ -166,7 +166,7 @@ async function main(): Promise<void> {
   /** the first usable control of the bar itself (not a popover): where Ctrl+Shift+B puts the focus */
   const firstBarControl = (): HTMLElement | null => {
     for (const c of $('bar').querySelectorAll<HTMLElement>('button, select, input'))
-      if (!c.closest('.popover') && !c.hidden && !(c as HTMLButtonElement).disabled && c.offsetParent !== null) return c;
+      if (!c.closest('.popover') && !c.hidden && !(c as HTMLButtonElement).disabled && c.offsetParent !== null && c.getClientRects().length > 0 && c.offsetWidth > 1) return c;
     return null;
   };
   bar.onHidden = () => {
