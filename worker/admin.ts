@@ -13,15 +13,17 @@ export const DATASET = 'd2_webgpu_visits';
 /** blob columns written by countVisit, in order */
 const COLUMNS = { browser: 'blob1', browserMajor: 'blob2', os: 'blob3', webgpu: 'blob4', vendor: 'blob5', architecture: 'blob6', features: 'blob7', jspi: 'blob8', country: 'index1' } as const;
 
-const BREAKDOWNS: Record<string, string> = {
-  country: COLUMNS.country,
-  webgpu: COLUMNS.webgpu,
-  browser: `concat(${COLUMNS.browser}, ' ', ${COLUMNS.browserMajor})`,
-  os: COLUMNS.os,
-  gpu: `concat(${COLUMNS.vendor}, ' / ', ${COLUMNS.architecture})`,
-  features: COLUMNS.features,
-  jspi: COLUMNS.jspi,
+/** one or two columns per breakdown; two are grouped together and joined in adminStats (no string functions in SQL) */
+const BREAKDOWNS: Record<string, [string] | [string, string]> = {
+  country: [COLUMNS.country],
+  webgpu: [COLUMNS.webgpu],
+  browser: [COLUMNS.browser, COLUMNS.browserMajor],
+  os: [COLUMNS.os],
+  gpu: [COLUMNS.vendor, COLUMNS.architecture],
+  features: [COLUMNS.features],
+  jspi: [COLUMNS.jspi],
 };
+const JOIN: Record<string, string> = { browser: ' ', gpu: ' / ' };
 
 export function adminEnabled(env: AdminEnv): boolean {
   return !!(env.ADMIN_PASSWORD && env.CF_ACCOUNT_ID && env.CF_API_TOKEN);
@@ -34,26 +36,32 @@ export function statsQueries(daysIn: number): Record<string, string> {
   const out: Record<string, string> = {
     daily: `SELECT toStartOfInterval(timestamp, INTERVAL '1' DAY) AS k, SUM(_sample_interval) AS n FROM ${DATASET} WHERE ${since} GROUP BY k ORDER BY k`,
   };
-  for (const [name, expr] of Object.entries(BREAKDOWNS))
-    out[name] = `SELECT ${expr} AS k, SUM(_sample_interval) AS n FROM ${DATASET} WHERE ${since} GROUP BY k ORDER BY n DESC LIMIT 50`;
+  for (const [name, [a, b]] of Object.entries(BREAKDOWNS)) {
+    const cols = b ? `${a} AS k, ${b} AS k2` : `${a} AS k`;
+    const group = b ? 'k, k2' : 'k';
+    out[name] = `SELECT ${cols}, SUM(_sample_interval) AS n FROM ${DATASET} WHERE ${since} GROUP BY ${group} ORDER BY n DESC LIMIT 50`;
+  }
   return out;
 }
 
-async function sql(env: AdminEnv, query: string): Promise<{ k: string; n: number }[]> {
+async function sql(env: AdminEnv, query: string, join = ' '): Promise<{ k: string; n: number }[]> {
   const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/analytics_engine/sql`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.CF_API_TOKEN}` },
     body: query,
   });
   if (!r.ok) throw new Error(`Analytics Engine SQL ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const body = (await r.json()) as { data?: { k: unknown; n: unknown }[] };
-  return (body.data ?? []).map((row) => ({ k: String(row.k ?? ''), n: Number(row.n) || 0 }));
+  const body = (await r.json()) as { data?: { k: unknown; k2?: unknown; n: unknown }[] };
+  return (body.data ?? []).map((row) => ({
+    k: row.k2 === undefined ? String(row.k ?? '') : [row.k, row.k2].map((v) => String(v ?? '')).filter(Boolean).join(join),
+    n: Number(row.n) || 0,
+  }));
 }
 
 export async function adminStats(env: AdminEnv, url: URL): Promise<Response> {
   const queries = statsQueries(Number(url.searchParams.get('days') ?? 30));
   try {
-    const entries = await Promise.all(Object.entries(queries).map(async ([name, q]) => [name, await sql(env, q)] as const));
+    const entries = await Promise.all(Object.entries(queries).map(async ([name, q]) => [name, await sql(env, q, JOIN[name])] as const));
     return Response.json(Object.fromEntries(entries), { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502, headers: { 'Cache-Control': 'no-store' } });
@@ -101,7 +109,7 @@ export const ADMIN_HTML = `<!doctype html>
 <script>
 const TITLES = { daily: 'Visits per day', webgpu: 'WebGPU', country: 'Country', browser: 'Browser', os: 'OS', gpu: 'GPU vendor / architecture', features: 'WebGPU features', jspi: 'JSPI' };
 const out = document.getElementById('out');
-function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 function table(rows) {
   const max = Math.max(1, ...rows.map((r) => r.n));
   return '<table>' + rows.map((r) => '<tr><td class="k" title="' + esc(r.k) + '">' + (esc(r.k.trim()) || '<span class="dim">(none)</span>') +

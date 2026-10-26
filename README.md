@@ -73,11 +73,15 @@ gamepad, short hitches when a new level is generated, height fixed at 600 (width
 
 ## Privacy
 
-The hosted page counts visits without cookies or any stored identifier. One request per page load records whether
-WebGPU works (hardware or software adapter, GPU vendor and architecture, a few optional features), whether the browser
-has JSPI, the browser family and major version, the OS family and the country. The IP address and the full User-Agent
-are not kept. Nothing is sent when Global Privacy Control or Do Not Track is on. Game files and saves never leave the
-browser.
+The hosted page asks before collecting anything, and nothing is sent until you choose. There are two separate options:
+
+- **WebGPU & JSPI support**: whether WebGPU works (hardware or software adapter, GPU vendor and architecture, a few
+  optional features), whether the browser has JSPI, and the browser family, major version and OS family.
+- **Country** of the visit.
+
+At most one request per page load, no cookies, no identifier. The IP address and the full User-Agent are not kept. Your
+choice is remembered in this browser's local storage and can be changed under Tools. Nothing is sent when Global
+Privacy Control or Do Not Track is on. Game files and saves never leave the browser.
 
 ## Credits
 

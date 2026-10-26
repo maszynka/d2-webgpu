@@ -125,6 +125,22 @@ body.playing canvas#view:focus-visible { outline: none; }
 #welcome-close { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; pointer-events: auto; font: inherit; font-size: 16px; line-height: 1;
   color: var(--dim); background: transparent; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; }
 #welcome-close:hover { color: var(--fg); border-color: var(--ctl-line); }
+/* analytics opt-in: a compact card; a full-width third row under the welcome cards, else a strip at the bottom of the stage */
+#consent { margin: 0; padding: 10px 14px; font-size: 12px; line-height: 1.4; pointer-events: auto; }
+#consent[hidden] { display: none; }
+#welcome > #consent { grid-column: 1 / -1; max-width: none; }
+#stage > #consent { position: absolute; left: 8px; bottom: 8px; z-index: 6; max-width: min(460px, calc(100% - 16px)); box-shadow: 0 2px 12px rgb(0 0 0 / 0.5); }
+#consent fieldset { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 4px; }
+#consent legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--acc); }
+#consent label { display: grid; grid-template-columns: 16px 1fr; gap: 6px; align-items: start; cursor: pointer; }
+#consent input[type='checkbox'] { margin: 1px 0 0; width: 14px; height: 14px; accent-color: var(--acc); cursor: pointer; }
+#consent p { margin: 6px 0 0; }
+#consent .actions { margin-top: 8px; justify-content: flex-start; }
+#consent .actions button { padding: 4px 10px; }
+#consent .actions .primary { background: #231d10; color: #ece2c4; }
+#consent .actions button:hover { border-color: var(--acc); }
+#bar #consent-edit { max-width: none; white-space: nowrap; }
+#privacy-tools #consent-state { font-size: 11.5px; }
 #debug { position: absolute; top: 8px; right: 8px; z-index: 4; margin: 0; padding: 8px 10px; max-width: 40em; white-space: pre-wrap;
   font: var(--mono); background: rgb(0 0 0 / 0.72); border-radius: var(--radius); pointer-events: none; }
 #debug[hidden] { display: none; }

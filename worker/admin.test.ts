@@ -15,6 +15,9 @@ describe('statsQueries', () => {
     expect(Object.keys(q)).toEqual(['daily', 'country', 'webgpu', 'browser', 'os', 'gpu', 'features', 'jspi']);
     expect(q['country']).toMatch(/SELECT index1 AS k, SUM\(_sample_interval\)/);
     expect(q['webgpu']).toContain('blob4 AS k');
+    expect(q['browser']).toMatch(/SELECT blob1 AS k, blob2 AS k2, .* GROUP BY k, k2 /);
+    expect(q['gpu']).toMatch(/SELECT blob5 AS k, blob6 AS k2, .* GROUP BY k, k2 /);
+    for (const sql of Object.values(q)) expect(sql).not.toMatch(/concat|format\(/);
     for (const sql of Object.values(q)) expect(sql).toContain('FROM d2_webgpu_visits');
   });
 });

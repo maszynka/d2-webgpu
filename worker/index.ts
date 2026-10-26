@@ -31,12 +31,13 @@ async function countVisit(request: Request, env: Env): Promise<Response> {
     if (text.length > MAX_VISIT_BODY) return done;
     const report = parseReport(JSON.parse(text));
     if (!report) return done;
-    const { browser, browserMajor, os } = parseUserAgent(request.headers.get('User-Agent') ?? '');
-    const country = (request as Request & { cf?: { country?: string } }).cf?.country ?? 'XX';
+    // without tech consent no browser / OS either; without country consent '--'
+    const ua = report.consent.tech ? parseUserAgent(request.headers.get('User-Agent') ?? '') : { browser: '', browserMajor: '', os: '' };
+    const country = report.consent.country ? ((request as Request & { cf?: { country?: string } }).cf?.country ?? 'XX') : '--';
     // the country is index1; blob order is the dataset's column order (blob1..blob8), keep it stable
     env.VISITS.writeDataPoint({
       indexes: [country],
-      blobs: [browser, browserMajor, os, report.webgpu, report.vendor, report.architecture, report.features.join(','), report.jspi ? 'jspi' : 'no-jspi'],
+      blobs: [ua.browser, ua.browserMajor, ua.os, report.webgpu, report.vendor, report.architecture, report.features.join(','), report.consent.tech ? (report.jspi ? 'jspi' : 'no-jspi') : ''],
       doubles: [1],
     });
   } catch {
@@ -71,7 +72,6 @@ function passwordFrom(header: string | null): string | null {
 const ADMIN_HEADERS = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' };
 
 async function admin(request: Request, env: Env, url: URL): Promise<Response> {
-  if (!adminEnabled(env)) return new Response('Not found', { status: 404, headers: ADMIN_HEADERS });
   const given = passwordFrom(request.headers.get('Authorization'));
   if (given === null || !(await sameSecret(given, env.ADMIN_PASSWORD!))) {
     return new Response('Password required', {
@@ -82,14 +82,18 @@ async function admin(request: Request, env: Env, url: URL): Promise<Response> {
   if (url.pathname === '/admin' || url.pathname === '/admin/') {
     return new Response(ADMIN_HTML, { headers: { ...ADMIN_HEADERS, 'Content-Type': 'text/html; charset=utf-8', 'X-Frame-Options': 'DENY' } });
   }
-  if (url.pathname === '/admin/api/stats' && request.method === 'GET') return adminStats(env, url);
+  if (url.pathname === '/admin/api/stats') {
+    if (request.method !== 'GET') return new Response(null, { status: 405, headers: { ...ADMIN_HEADERS, Allow: 'GET' } });
+    return adminStats(env, url);
+  }
   return new Response('Not found', { status: 404, headers: ADMIN_HEADERS });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin(request, env, url);
+    // only when configured; otherwise /admin is an ordinary path (behind the site password on gated deploys)
+    if (adminEnabled(env) && (url.pathname === '/admin' || url.pathname.startsWith('/admin/'))) return admin(request, env, url);
     // gated deploys aren't counted and keep the endpoint behind the password like everything else
     if (!env.SITE_PASSWORD && url.pathname === VISIT_PATH) return countVisit(request, env);
     if (!env.SITE_PASSWORD) {

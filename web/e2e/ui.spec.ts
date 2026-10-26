@@ -231,3 +231,96 @@ test('screenshot of the bar in the no-files state', async ({ page }) => {
   await ready(page);
   await page.screenshot({ path: `${process.env['D2_SHOT_DIR'] ?? 'test-results'}/res-bar-nofiles.png` });
 });
+
+// analytics opt-in (ui/consent.ts): nothing is stored until chosen; the choice lives in localStorage
+const CONSENT_KEY = 'd2.analytics.consent.v1';
+const storedConsent = (page: Page): Promise<unknown> => page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? 'null'), CONSENT_KEY);
+
+test('consent: shown on first visit under the welcome cards, both boxes unchecked', async ({ page }) => {
+  await ready(page);
+  const consent = page.locator('#consent');
+  await expect(consent).toBeVisible();
+  expect(await storedConsent(page)).toBeNull();
+  expect(await consent.evaluate((el) => el.parentElement?.id)).toBe('welcome');
+  await expect(page.locator('#consent-tech')).not.toBeChecked();
+  await expect(page.locator('#consent-country')).not.toBeChecked();
+  await expect(page.locator('#consent-ok')).toHaveText('Confirm');
+  // keyboard reachable: the boxes are real checkboxes with labels
+  await page.locator('#consent-tech').focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('#consent-tech')).toBeChecked();
+});
+
+test('consent: Confirm with one box stores it, hides the card, and it stays hidden after a reload', async ({ page }) => {
+  await ready(page);
+  await page.check('#consent-tech');
+  await page.click('#consent-ok');
+  await expect(page.locator('#consent')).toBeHidden();
+  expect(await storedConsent(page)).toEqual({ tech: true, country: false });
+  await page.reload();
+  await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
+  await expect(page.locator('#consent')).toBeHidden();
+  await expect(page.locator('#welcome')).toBeVisible();
+});
+
+test('consent: "Do not allow" stores an all-false choice; Confirm with nothing checked does the same', async ({ page }) => {
+  await ready(page);
+  await page.click('#consent-none');
+  await expect(page.locator('#consent')).toBeHidden();
+  expect(await storedConsent(page)).toEqual({ tech: false, country: false });
+  await page.evaluate((k) => localStorage.removeItem(k), CONSENT_KEY);
+  await page.reload();
+  await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
+  await expect(page.locator('#consent')).toBeVisible();
+  await page.click('#consent-ok');
+  expect(await storedConsent(page)).toEqual({ tech: false, country: false });
+});
+
+test('consent: still shown as a strip over the stage when the welcome cards are closed or dismissed by the URL', async ({ page }) => {
+  await ready(page);
+  await page.click('#welcome-close');
+  await expect(page.locator('#welcome')).toBeHidden();
+  const consent = page.locator('#consent');
+  await expect(consent).toBeVisible();
+  expect(await consent.evaluate((el) => el.parentElement?.id)).toBe('stage');
+  // it does not cover the scene: a small box at the bottom left
+  const box = (await consent.boundingBox())!;
+  const stage = (await page.locator('#stage').boundingBox())!;
+  expect(box.width).toBeLessThan(stage.width / 2);
+  expect(box.y + box.height).toBeLessThanOrEqual(stage.y + stage.height);
+  await page.goto('/?present=nearest');
+  await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
+  await expect(page.locator('#welcome')).toBeHidden();
+  await expect(page.locator('#consent')).toBeVisible();
+});
+
+test('consent: reopened from Tools -> Privacy, preset to the stored choice', async ({ page }) => {
+  await ready(page);
+  await page.check('#consent-country');
+  await page.click('#consent-ok');
+  await expect(page.locator('#consent')).toBeHidden();
+  await page.click('#tools-btn');
+  await expect(page.locator('#consent-state')).toHaveText('allowed: country');
+  await page.click('#consent-edit');
+  await expect(page.locator('#consent')).toBeVisible();
+  await expect(page.locator('#consent-tech')).toBeFocused();
+  await expect(page.locator('#consent-tech')).not.toBeChecked();
+  await expect(page.locator('#consent-country')).toBeChecked();
+  await page.check('#consent-tech');
+  await page.click('#consent-ok');
+  await expect(page.locator('#consent')).toBeHidden();
+  expect(await storedConsent(page)).toEqual({ tech: true, country: true });
+  await page.click('#tools-btn');
+  await expect(page.locator('#consent-state')).toHaveText('allowed: WebGPU support, country');
+});
+
+test('consent: a phone-width layout keeps the card inside the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page);
+  const consent = page.locator('#consent');
+  await consent.scrollIntoViewIfNeeded();
+  const box = (await consent.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: `${process.env['D2_SHOT_DIR'] ?? 'test-results'}/res-consent-phone.png`, fullPage: false });
+});

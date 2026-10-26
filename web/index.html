@@ -97,6 +97,11 @@
             <button id="saves-import" type="button" title="A backup ZIP, or .d2s character files (with .key / .ma0-.ma3) from the original game">Import saves&hellip;</button>
             <input id="saves-file" type="file" multiple accept=".zip,.d2s,.key,.ma0,.ma1,.ma2,.ma3" hidden />
           </div>
+          <div class="row" id="privacy-tools">
+            <span class="k">Privacy</span>
+            <button id="consent-edit" type="button" title="Change what the anonymous visit count may record">Data collection&hellip;</button>
+            <span id="consent-state" class="dim"></span>
+          </div>
           <div class="row">
             <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
             <label><input id="autoplay" type="checkbox" checked /> start the game after picking files</label>
@@ -142,6 +147,20 @@
             <p class="dim">Characters are saved in this browser. Back them up, or bring in saves from the original game (1.09&ndash;1.14d), under &#9881; Tools &rarr; Saves.</p>
           </section>
         </div>
+        <!-- analytics opt-in (ui/consent.ts): a third row under the welcome cards while they show, otherwise a small strip at the
+             bottom of the stage; gone once chosen, back from Tools -> Privacy -->
+        <form id="consent" class="card" hidden aria-labelledby="consent-title">
+          <fieldset>
+            <legend id="consent-title">Anonymous visit count (opt-in)</legend>
+            <label><input id="consent-tech" type="checkbox" /> Allow collecting WebGPU &amp; JSPI support (GPU type, browser and OS family). It shows which browsers can run the game.</label>
+            <label><input id="consent-country" type="checkbox" /> Allow collecting the country of the visit. No IP address, no finer location.</label>
+          </fieldset>
+          <p class="dim">Nothing else is kept: no cookies, no IP address, no visitor id. Change this any time under &#9881; Tools &rarr; Privacy.</p>
+          <div class="actions">
+            <button id="consent-ok" type="submit" class="primary">Confirm</button>
+            <button id="consent-none" type="button">Do not allow any data collection</button>
+          </div>
+        </form>
         <div id="drop" class="overlay" hidden><div class="card">Drop your Diablo II folder here</div></div>
         <div id="nogpu" class="overlay" role="alert" hidden><div class="card">
           <h2>WebGPU is not available</h2>

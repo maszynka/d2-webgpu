@@ -26,6 +26,7 @@ import { FSR_BUDGET_MS, FsrAutoCheck, initialAutoMode } from './gpu/autoquality'
 import { bindDivider } from './ui/divider';
 import { bindUpscaleStrip } from './ui/display';
 import { bindWelcome } from './ui/welcome';
+import { bindConsent } from './ui/consent';
 import { bindLoupe } from './ui/loupe';
 import { bindHud } from './ui/hud';
 import { FullGame, type FullGameStats } from './full/fullgame';
@@ -33,7 +34,7 @@ import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
 import { MapScene } from './world/tilemap';
-import { jspiSupported, sendVisit, TRACKED_FEATURES, type WebGpuStatus } from './analytics/visit';
+import { jspiSupported, recordTech, type WebGpuStatus } from './analytics/visit';
 
 /** Page state for tests (window.__d2.ui) */
 export interface UiInfo {
@@ -167,6 +168,8 @@ async function main(): Promise<void> {
     syncWelcome();
   };
   syncWelcome();
+  // the analytics opt-in follows the cards (under them, or a strip over the stage once they are gone) until chosen
+  bindConsent();
   /** the first usable control of the bar itself (not a popover): where Ctrl+Shift+B puts the focus */
   const firstBarControl = (): HTMLElement | null => {
     for (const c of $('bar').querySelectorAll<HTMLElement>('button, select, input'))
@@ -212,13 +215,7 @@ async function main(): Promise<void> {
   if (params.get('bar') === 'pinned') bar.setPinned(true);
 
   const visit = (webgpu: WebGpuStatus, a?: { vendor: string; architecture: string; features: string[] }): void =>
-    sendVisit({
-      webgpu,
-      vendor: a?.vendor ?? '',
-      architecture: a?.architecture ?? '',
-      features: a ? a.features.filter((f) => (TRACKED_FEATURES as readonly string[]).includes(f)) : [],
-      jspi: jspiSupported(),
-    });
+    recordTech({ webgpu, vendor: a?.vendor ?? '', architecture: a?.architecture ?? '', features: a?.features ?? [], jspi: jspiSupported() });
   const noGpu = (reason: string): void => {
     $('nogpu').hidden = false;
     $('nogpu-reason').textContent = reason;

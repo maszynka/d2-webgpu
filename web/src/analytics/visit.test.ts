@@ -3,21 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { parseReport, parseUserAgent } from './visit';
 
 describe('parseReport', () => {
+  const all = { tech: true, country: true };
   it('keeps the known fields and drops the rest', () => {
     expect(parseReport({
-      webgpu: 'hardware', vendor: 'Apple', architecture: 'metal-3', jspi: true,
+      consent: all, webgpu: 'hardware', vendor: 'Apple', architecture: 'metal-3', jspi: true,
       features: ['timestamp-query', 'texture-compression-bc', 'shader-f16'], extra: 'x',
-    })).toEqual({ webgpu: 'hardware', vendor: 'apple', architecture: 'metal-3', features: ['timestamp-query', 'shader-f16'], jspi: true });
+    })).toEqual({ consent: all, webgpu: 'hardware', vendor: 'apple', architecture: 'metal-3', features: ['timestamp-query', 'shader-f16'], jspi: true });
   });
 
   it('rejects bodies without a known WebGPU status', () => {
     expect(parseReport(null)).toBeNull();
     expect(parseReport('hardware')).toBeNull();
-    expect(parseReport({ webgpu: 'yes' })).toBeNull();
+    expect(parseReport({ consent: all, webgpu: 'yes' })).toBeNull();
+  });
+
+  it('allows nothing without consent, and only the country without tech consent', () => {
+    expect(parseReport({ webgpu: 'hardware', jspi: true })).toBeNull();
+    expect(parseReport({ consent: { tech: false, country: false }, webgpu: 'hardware' })).toBeNull();
+    expect(parseReport({ consent: { tech: false, country: true }, webgpu: 'hardware', vendor: 'apple', jspi: true, features: ['shader-f16'] }))
+      .toEqual({ consent: { tech: false, country: true }, webgpu: 'unknown', vendor: '', architecture: '', features: [], jspi: false });
+    expect(parseReport({ consent: { tech: true, country: false }, webgpu: 'none' })?.consent).toEqual({ tech: true, country: false });
   });
 
   it('strips odd characters and caps the length of adapter strings', () => {
-    const r = parseReport({ webgpu: 'software', vendor: '<script>/var/x ' + 'a'.repeat(80), architecture: 5 });
+    const r = parseReport({ consent: all, webgpu: 'software', vendor: '<script>/var/x ' + 'a'.repeat(80), architecture: 5 });
     expect(r?.vendor).toMatch(/^[a-z0-9._-]{1,32}$/);
     expect(r?.architecture).toBe('');
     expect(r?.features).toEqual([]);
