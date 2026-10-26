@@ -11,8 +11,8 @@ Most of the older design docs (`PLAN.md`, `PLAN-full-game.md`, `full-game-status
   C++ reimplementation [d2decomped](https://github.com/psi29a/d2decomped), compiled to WebAssembly with Emscripten.
   All pixels reach the screen through our own WebGPU presentation path (G-buffer lighting for the viewer/map modes,
   FSR1 upscaling for the full game).
-* **Private hobby project.** GitHub `maszynka/d2-webgpu` is private; the deployed site is behind a password gate
-  (Cloudflare Worker with HTTP Basic auth, secret `SITE_PASSWORD`). Personal use only.
+* **Hobby project.** The deployed site is public (since 2026-10-26). The Worker keeps an optional HTTP Basic auth gate,
+  active only when the `SITE_PASSWORD` secret is set.
 * **No Blizzard data anywhere.** The user picks their own Diablo II folder (MPQ archives) in the browser; files are mounted
   read-only into the WASM worker and never uploaded, committed, or deployed.
 * **License: GPL-3.0-or-later** for the whole repo (`LICENSE`, copy of upstream's), because we link and compile
@@ -102,7 +102,7 @@ Two tracks share one Vite/TypeScript shell and one WebGPU renderer.
                   │ (StormLib)        │   │ virtual OpenAL -> audio ops -> Web Audio             │
                   └───────────────────┘   └──────────────────────────────────────────────────────┘
 
- deploy: web/dist ──► Cloudflare Workers static assets, Worker (Basic auth, SITE_PASSWORD) in front,
+ deploy: web/dist ──► Cloudflare Workers static assets, Worker (optional Basic auth, SITE_PASSWORD) in front,
          GPL source tarball at /source/d2-webgpu-<sha>.tar.gz
 ```
 
@@ -120,8 +120,8 @@ Two tracks share one Vite/TypeScript shell and one WebGPU renderer.
   at 600 by upstream's UI layout).
 * **Audio:** a virtual OpenAL in C++ is authoritative for source state and offsets; one batched message per game frame
   goes to the main thread (`AudioEngine`: buffer source, gain, stereo panner per voice; volume slider).
-* **Password gate and source offer:** `worker/index.ts` checks HTTP Basic credentials against the `SITE_PASSWORD` secret
-  before serving assets. `scripts/deploy.sh` builds both WASM modules and the web app, bundles `git archive` of the repo
+* **Optional password gate and source offer:** `worker/index.ts` serves the assets publicly (with `X-Robots-Tag: noindex`
+  until the announcement); when the `SITE_PASSWORD` secret is set it checks HTTP Basic credentials first. `scripts/deploy.sh` builds both WASM modules and the web app, bundles `git archive` of the repo
   plus the submodule tree into `web/dist/source/`, then runs `wrangler deploy`.
 
 ## 5. Tests and coverage
@@ -212,5 +212,5 @@ cd web && pnpm typecheck && pnpm lint && pnpm test
 cd web && pnpm e2e                           # Playwright; D2_MPQ_DIR=<game folder> enables the full-game specs
 node --experimental-wasm-jspi wasm/full/smoke.mjs   # d2full smoke (D2_MPQ_DIR optional)
 scripts/deploy.sh [branch]                   # builds everything, bundles GPL source, wrangler deploy (clean tree required)
-# one-time: set the Worker secret SITE_PASSWORD with wrangler; do not commit it
+# optional: set the Worker secret SITE_PASSWORD with wrangler to put the site behind a password; do not commit it
 ```

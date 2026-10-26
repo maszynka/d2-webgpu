@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// web/dist (app + wasm + bundled source archive) behind a password Worker
-// (worker/index.ts, secret SITE_PASSWORD). No game data.
+// web/dist (app + wasm + bundled source archive) served by worker/index.ts (public; optional password gate when the
+// SITE_PASSWORD secret is set). No game data.
 {
   "name": "d2-webgpu",
   "main": "worker/index.ts",

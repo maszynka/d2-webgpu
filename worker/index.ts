@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Password gate in front of the static assets (the whole site, incl. wasm and
-// the source archive). HTTP Basic auth; the password is the SITE_PASSWORD secret.
-// Fails closed: without the secret every request gets 503.
+// Serves the static assets (app, wasm, the source archive). Optional HTTP Basic auth gate: when the SITE_PASSWORD
+// secret is set, every request needs it (e.g. a private staging deploy); without it the site is public.
 
 interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -33,7 +32,13 @@ function passwordFrom(header: string | null): string | null {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!env.SITE_PASSWORD) return new Response('Site password not configured', { status: 503 });
+    if (!env.SITE_PASSWORD) {
+      // public; kept out of search results until the project is announced
+      const response = await env.ASSETS.fetch(request);
+      const out = new Response(response.body, response);
+      out.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      return out;
+    }
     const given = passwordFrom(request.headers.get('Authorization'));
     if (given === null || !(await sameSecret(given, env.SITE_PASSWORD))) {
       return new Response('Password required', {
