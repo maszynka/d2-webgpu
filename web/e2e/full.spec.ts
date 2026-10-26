@@ -334,6 +334,8 @@ test('resolution: the in-game view is wider than 800 and follows the window, sho
   const errors = watch(page);
   await page.setViewportSize({ width: 1600, height: 900 });
   await openAndPlay(page);
+  await page.selectOption('#present', 'fsr1'); // explicit: the auto default is bilinear on a software adapter
+  await page.waitForTimeout(300);
   // the menus stay 800x600 (letterboxed); the request already follows the canvas
   const menu = await page.evaluate(() => ({ w: window.__d2!.full!.width, ask: window.__d2!.full!.viewWidth, p: window.__d2!.present }));
   console.log(`menu: frame ${menu.w}, asked ${menu.ask}, present ${JSON.stringify(menu.p?.pass)} ${menu.p?.rect.w}x${menu.p?.rect.h} on ${menu.p?.canvasW}x${menu.p?.canvasH}`);

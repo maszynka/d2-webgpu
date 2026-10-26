@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { backupName, backupZip, characterNames, overwrites, planImport, readD2s } from './backup';
+import { backupName, backupZip, characterNames, isSaveEntry, overwrites, planImport, readD2s } from './backup';
 import { readZip, writeZip, crc32 } from './zip';
 
 /** A minimal .d2s header (enough for readD2s): magic, version, name at 0x14. */
@@ -9,6 +9,7 @@ function d2s(name: string, version = 96, size = 64): Uint8Array {
   const v = new DataView(b.buffer);
   v.setUint32(0, 0xaa55aa55, true);
   v.setUint32(4, version, true);
+  v.setUint32(8, size, true);
   b.set(new TextEncoder().encode(name), 0x14);
   return b;
 }
@@ -64,6 +65,43 @@ describe('zip', () => {
   });
 });
 
+describe('zip limits', () => {
+  const deflate = async (data: Uint8Array) => new Uint8Array(await new Response(new Blob([data as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+  /** one deflated entry whose header declares `declared` bytes */
+  async function deflatedZip(name: string, data: Uint8Array, declared = data.length): Promise<Uint8Array> {
+    const z = await deflate(data);
+    const n = new TextEncoder().encode(name);
+    const crc = crc32(data);
+    const local = new Uint8Array(30 + n.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(8, 8, true); lv.setUint32(14, crc, true);
+    lv.setUint32(18, z.length, true); lv.setUint32(22, declared, true); lv.setUint16(26, n.length, true);
+    local.set(n, 30);
+    const central = new Uint8Array(46 + n.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(10, 8, true); cv.setUint32(16, crc, true);
+    cv.setUint32(20, z.length, true); cv.setUint32(24, declared, true); cv.setUint16(28, n.length, true);
+    central.set(n, 46);
+    const end = new Uint8Array(22);
+    const ev = new DataView(end.buffer);
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, 1, true); ev.setUint16(10, 1, true);
+    ev.setUint32(12, central.length, true); ev.setUint32(16, local.length + z.length, true);
+    return new Uint8Array([...local, ...z, ...central, ...end]);
+  }
+
+  it('stops inflating at the declared size (a bomb that lies about its size)', async () => {
+    const bomb = await deflatedZip('Hero.d2s', new Uint8Array(4 << 20), 1000);
+    await expect(readZip(bomb)).rejects.toThrow(/beyond its declared size/);
+  });
+
+  it('refuses entries declared larger than the cap, and skips unwanted entries unread', async () => {
+    const big = await deflatedZip('Hero.d2s', new Uint8Array(2 << 20));
+    await expect(readZip(big, { maxEntry: 1 << 20 })).rejects.toThrow(/per file/);
+    expect(await readZip(big, { accept: (n) => n.endsWith('.key') })).toEqual([]);
+    await expect(readZip(big, { maxTotal: 1 << 20 })).rejects.toThrow(/too large/);
+  });
+});
+
 describe('save import plan', () => {
   it('reads the name and version from a .d2s header', () => {
     expect(readD2s(d2s('Amazonka'))).toEqual({ name: 'Amazonka', version: 96 });
@@ -71,6 +109,7 @@ describe('save import plan', () => {
     expect(readD2s(d2s('Ancient', 71))).toMatch(/version 71/);
     expect(readD2s(new Uint8Array(64))).toMatch(/not a Diablo II/);
     expect(readD2s(d2s('../x'))).toMatch(/not valid/);
+    expect(readD2s(d2s('Cut').subarray(0, 40))).toMatch(/damaged/);
   });
 
   it('places loose saves by the character name inside and keeps companions', () => {
@@ -84,6 +123,17 @@ describe('save import plan', () => {
     expect(plan.writes.map((w) => w.path).sort()).toEqual(['/idb/d2d/save/Paladyn.d2s', '/idb/d2d/save/Paladyn.key', '/idb/d2d/save/Paladyn.ma0']);
     expect(plan.characters).toEqual(['Paladyn']);
     expect(plan.skipped.map((s) => s.name)).toEqual(['readme.txt', 'bad.d2s']);
+  });
+
+  it('companions of a renamed .d2s follow it; settings only from a backup root', () => {
+    const plan = planImport([
+      { name: 'copy of hero.d2s', data: d2s('Paladyn') },
+      { name: 'copy of hero.key', data: new Uint8Array([1]) },
+      { name: 'other/d2d/d2d.cfg', data: new Uint8Array([2]) },
+    ]);
+    expect(plan.writes.map((w) => w.path).sort()).toEqual(['/idb/d2d/save/Paladyn.d2s', '/idb/d2d/save/Paladyn.key']);
+    expect(plan.skipped.map((x) => x.name)).toEqual(['other/d2d/d2d.cfg']);
+    expect(isSaveEntry('d2d/save/A.d2s') && isSaveEntry('d2d/d2d.cfg') && !isSaveEntry('__MACOSX/x.txt')).toBe(true);
   });
 
   it('restores a backup in place and refuses unsafe paths', () => {

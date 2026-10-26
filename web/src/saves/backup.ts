@@ -13,6 +13,16 @@ import { writeZip, type ZipEntry } from './zip';
 export const D2S_VERSIONS = [92, 93, 94, 95, 96] as const;
 const D2S_MAGIC = 0xaa55aa55;
 const COMPANION = /\.(key|ma[0-3])$/i;
+/** a character file is a few KB (1.14d tops out well under 16 KB); companions are smaller */
+export const MAX_SAVE_FILE = 1 << 20;
+/** a backup ZIP, or one picked file */
+export const MAX_IMPORT_FILE = 64 << 20;
+
+/** ZIP entries worth reading for an import (others are skipped unread). */
+export function isSaveEntry(name: string): boolean {
+  const n = name.replace(/\\/g, '/');
+  return /\.(d2s|key|ma[0-3])$/i.test(n) || /^d2d\/d2d\.cfg$/i.test(n);
+}
 
 export interface D2sInfo {
   name: string;
@@ -26,6 +36,8 @@ export function readD2s(data: Uint8Array): D2sInfo | string {
   if (v.getUint32(0, true) !== D2S_MAGIC) return 'not a Diablo II character file';
   const version = v.getUint32(4, true);
   if (!(D2S_VERSIONS as readonly number[]).includes(version)) return `character file version ${version} is not supported (needs Diablo II 1.09 or newer)`;
+  // 1.09+ headers carry the file size: a truncated or padded copy would replace a good character with one the game rejects
+  if (v.getUint32(8, true) !== data.length) return 'character file is damaged (size does not match its header)';
   const raw = data.subarray(20, 36);
   const end = raw.indexOf(0);
   const name = new TextDecoder('latin1').decode(end < 0 ? raw : raw.subarray(0, end));
@@ -47,8 +59,17 @@ export function planImport(files: readonly { name: string; data: Uint8Array }[])
   const byPath = new Map<string, Uint8Array>();
   const characters = new Set<string>();
   const skipped: ImportPlan['skipped'] = [];
-  for (const f of files) {
-    const name = f.name.replace(/\\/g, '/');
+  // a renamed .d2s ("copy of hero.d2s") takes its companions ("copy of hero.key") along to the character's name
+  const renamed = new Map<string, string>();
+  const stem = (p: string): string => p.slice(0, p.lastIndexOf('.')).toLowerCase();
+  const items = files.map((f) => ({ ...f, name: f.name.replace(/\\/g, '/') }));
+  for (const f of items) {
+    if (!f.name.toLowerCase().endsWith('.d2s')) continue;
+    const info = readD2s(f.data);
+    if (typeof info !== 'string') renamed.set(stem(f.name), info.name);
+  }
+  for (const f of items) {
+    const name = f.name;
     if (name.split('/').some((s) => s === '..')) {
       skipped.push({ name, reason: 'unsafe path' });
       continue;
@@ -57,6 +78,10 @@ export function planImport(files: readonly { name: string; data: Uint8Array }[])
     const leaf = base(name);
     if (leaf.startsWith('.') || leaf === '') {
       skipped.push({ name, reason: 'not a save file' });
+      continue;
+    }
+    if (f.data.length > MAX_SAVE_FILE) {
+      skipped.push({ name, reason: 'too large for a save file' });
       continue;
     }
     if (lower.endsWith('.d2s')) {
@@ -68,9 +93,10 @@ export function planImport(files: readonly { name: string; data: Uint8Array }[])
       characters.add(info.name);
       byPath.set(`${SAVE_DIR}/${info.name}.d2s`, f.data);
     } else if (COMPANION.test(lower)) {
-      byPath.set(`${SAVE_DIR}/${leaf}`, f.data);
-    } else if (/(^|\/)d2d\/d2d\.cfg$/i.test(name)) {
-      byPath.set(`${ROOT}/d2d/d2d.cfg`, f.data); // only from a backup: the game's own settings file
+      const owner = renamed.get(stem(name));
+      byPath.set(`${SAVE_DIR}/${owner ? owner + leaf.slice(leaf.lastIndexOf('.')) : leaf}`, f.data);
+    } else if (/^d2d\/d2d\.cfg$/i.test(name)) {
+      byPath.set(`${ROOT}/d2d/d2d.cfg`, f.data); // the game's settings, only from the root of one of our backups
     } else {
       skipped.push({ name, reason: 'not a save file' });
     }

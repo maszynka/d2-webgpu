@@ -66,28 +66,42 @@ function stopSyncTimer(): void {
   syncTimer = null;
 }
 
-/** FS.syncfs(false); calls never overlap: one requested while another runs is repeated right after it. */
+/** callers waiting for a write that starts after their request (a running write may predate the data they need) */
+let nextWaiters: (() => void)[] = [];
+/** callers waiting for the write in flight */
+let runWaiters: (() => void)[] = [];
+
+/**
+ * FS.syncfs(false); calls never overlap: one requested while another runs is repeated right after it. Resolves when a
+ * write that started after this call has finished (at once when writing is impossible: no module, read-only, closed).
+ */
 function flushUserDir(): Promise<void> {
   const m = mod;
   if (!m || readOnly || closed) return Promise.resolve();
-  if (syncing) {
-    syncAgain = true;
-    return Promise.resolve();
-  }
+  const done = new Promise<void>((resolve) => nextWaiters.push(resolve));
+  if (syncing) syncAgain = true;
+  else runSync(m);
+  return done;
+}
+
+function runSync(m: D2Module): void {
   syncing = true;
   const gen = syncGen;
-  return new Promise((resolve) => {
-    m.FS.syncfs(false, (err) => {
-      if (gen !== syncGen) return;
-      syncing = false;
-      if (err) post({ t: 'log', line: `IDBFS save failed: ${err.message}` });
-      else post({ t: 'synced', saves: ++syncs });
-      resolve();
-      if (syncAgain) {
-        syncAgain = false;
-        void flushUserDir();
-      }
-    });
+  runWaiters = nextWaiters;
+  nextWaiters = [];
+  m.FS.syncfs(false, (err) => {
+    if (gen !== syncGen) return;
+    syncing = false;
+    if (err) post({ t: 'log', line: `IDBFS save failed: ${err.message}` });
+    else post({ t: 'synced', saves: ++syncs });
+    const waiters = runWaiters;
+    runWaiters = [];
+    waiters.forEach((r) => r());
+    if (syncAgain) {
+      syncAgain = false;
+      if (!readOnly && !closed) runSync(m);
+    }
+    if (!syncing) nextWaiters.splice(0).forEach((r) => r());
   });
 }
 
@@ -193,6 +207,7 @@ async function finalFlush(): Promise<void> {
     syncGen++;
     syncing = false;
     syncAgain = false;
+    nextWaiters.unshift(...runWaiters.splice(0)); // the abandoned write's callers wait for the fresh one
   }
   await flushUserDir();
 }
@@ -242,9 +257,13 @@ ctx.onmessage = (e) => {
     case 'recycle':
       state?.pool.recycle(msg.buf, msg.want);
       break;
-    case 'flush':
-      void flushUserDir();
+    case 'flush': {
+      const id = msg.id;
+      void flushUserDir().then(() => {
+        if (id !== undefined) post({ t: 'flushDone', id });
+      });
       break;
+    }
     case 'stop':
       stop();
       break;

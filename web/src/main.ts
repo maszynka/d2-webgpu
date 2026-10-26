@@ -18,7 +18,7 @@ import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui
 import type { UiInfo as UiFrameInfo } from './full/uitrailer';
 import { registerFakeStage } from './gpu/fakestage';
 import { registerStage, STAGE_MODES, unregisterStage } from './gpu/upscale/registry';
-import { backupName, backupZip, characterNames, overwrites, planImport } from './saves/backup';
+import { backupName, backupZip, characterNames, isSaveEntry, MAX_IMPORT_FILE, MAX_SAVE_FILE, overwrites, planImport } from './saves/backup';
 import { listFiles, writeFiles } from './saves/store';
 import { readZip } from './saves/zip';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
@@ -591,6 +591,7 @@ async function main(): Promise<void> {
     if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
     panel.closePopovers();
     await pendingStop; // never two workers on IndexedDB at once
+    await saveOp; // nor a worker while an import writes IndexedDB (its first sync would drop the imported files)
     canvas.style.cursor = 'none';
     document.body.classList.add('playing');
     canvas.setAttribute('aria-label', 'Diablo II');
@@ -620,6 +621,9 @@ async function main(): Promise<void> {
     syncOverlay();
   };
   let pendingStop: Promise<void> = Promise.resolve();
+  /** an import's stop + IndexedDB write; play() waits for it */
+  let saveOp: Promise<void> = Promise.resolve();
+  let importing = false;
   const stopFull = async (): Promise<void> => {
     const g = full;
     if (!g) return;
@@ -678,11 +682,17 @@ async function main(): Promise<void> {
   });
   const importSaves = async (picked: File[]): Promise<void> => {
     if (picked.length === 0) return;
+    if (importing) {
+      panel.setStatus('An import is already running.', true);
+      return;
+    }
+    importing = true;
     try {
       const items: { name: string; data: Uint8Array }[] = [];
       for (const f of picked) {
+        if (f.size > MAX_IMPORT_FILE) throw new Error(`${f.name} is too large for a save or a backup`);
         const data = new Uint8Array(await f.arrayBuffer());
-        if (/\.zip$/i.test(f.name)) items.push(...(await readZip(data)));
+        if (/\.zip$/i.test(f.name)) items.push(...(await readZip(data, { accept: isSaveEntry, maxEntry: MAX_SAVE_FILE, maxTotal: MAX_IMPORT_FILE })));
         else items.push({ name: f.name, data });
       }
       const plan = planImport(items);
@@ -696,16 +706,24 @@ async function main(): Promise<void> {
       const what = plan.characters.length ? plan.characters.join(', ') : `${plan.writes.length} file${plan.writes.length === 1 ? '' : 's'}`;
       const notes = [full ? 'The game will be stopped first (it saves your character).' : '', replace.length ? `This replaces: ${replace.join(', ')}.` : ''].filter(Boolean);
       if (notes.length && !confirm(`Import ${what}?\n\n${notes.join('\n')}`)) return;
-      if (full) {
-        hideFailed();
-        await stopFull();
-        showDemo();
-      }
-      await pendingStop; // never write while a worker may still sync
-      await writeFiles(plan.writes);
+      // set synchronously, before any other handler runs: a Play click from here on waits for the write
+      const op = (async () => {
+        if (full) {
+          hideFailed();
+          const stopping = stopFull();
+          showDemo();
+          await stopping;
+        }
+        await pendingStop; // never write while a worker may still sync
+        await writeFiles(plan.writes);
+      })();
+      saveOp = op.catch(() => undefined);
+      await op;
       panel.setStatus(`Imported ${what}${skipped ? `; skipped ${skipped}` : ''}. They are in the game's character list.`);
     } catch (e) {
       panel.setStatus(`Import failed: ${errText(e)}`, true);
+    } finally {
+      importing = false;
     }
   };
   $('game-restart').addEventListener('click', () => {

@@ -7,6 +7,7 @@ function d2s(name: string, version = 96): Buffer {
   const b = Buffer.alloc(128);
   b.writeUInt32LE(0xaa55aa55, 0);
   b.writeUInt32LE(version, 4);
+  b.writeUInt32LE(b.length, 8); // file size, as 1.09+ headers carry it
   b.write(name, 0x14, 'latin1');
   return b;
 }
