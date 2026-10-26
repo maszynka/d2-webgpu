@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+build-*/
+*.log
+.DS_Store
+web/public/d2core.*
+.wrangler/
+web/public/d2full.*

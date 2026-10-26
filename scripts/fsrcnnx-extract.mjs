@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Extracts the FSRCNNX 8-0-4-1 weights from igv's mpv user shader (FSRCNNX_x2_8-0-4-1.glsl, LGPL-3.0-or-later,
+// Copyright (C) 2017-2021 igv) into
+//   web/public/fsrcnnx-8-0-4-1.bin             512-byte ASCII notice header + little-endian f32 data
+//   web/src/gpu/upscale/fsrcnnx-layout.ts       generated offsets/shapes per pass
+// Usage: node scripts/fsrcnnx-extract.mjs path/to/FSRCNNX_x2_8-0-4-1.glsl
+// Source: a local copy of FSRCNNX_x2_8-0-4-1.glsl (igv/FSRCNN-TensorFlow release 1.1).
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const srcPath = process.argv[2];
+if (!srcPath) throw new Error('usage: node scripts/fsrcnnx-extract.mjs path/to/FSRCNNX_x2_8-0-4-1.glsl');
+const text = readFileSync(srcPath, 'utf8');
+
+const HEADER_BYTES = 512;
+const header = [
+  'FSRCNNX 8-0-4-1 weights (f32 LE follow this 512-byte header). Extracted by scripts/fsrcnnx-extract.mjs from',
+  'FSRCNNX_x2_8-0-4-1.glsl, Copyright (C) 2017-2021 igv (https://github.com/igv/FSRCNN-TensorFlow), licensed under the',
+  'GNU Lesser General Public License v3.0 or later: https://www.gnu.org/licenses/lgpl-3.0.html. This data is a',
+  'derivative work distributed under the same licence; layout: web/src/gpu/upscale/fsrcnnx-layout.ts.',
+].join('\n');
+if (header.length >= HEADER_BYTES) throw new Error('header too long');
+
+const num = (s) => s.split(',').map((x) => Number.parseFloat(x.trim()));
+const chunks = text.split('//!HOOK ').slice(1);
+if (chunks.length !== 14) throw new Error(`expected 14 passes, got ${chunks.length}`);
+
+const floats = [];
+const passes = [];
+const push = (arr, want) => {
+  if (arr.length !== want) throw new Error(`expected ${want} floats, got ${arr.length}`);
+  const off = floats.length;
+  if (off % 4) throw new Error('misaligned block');
+  for (const v of arr) floats.push(Math.fround(v));
+  return off;
+};
+
+for (const chunk of chunks) {
+  const dir = (k) => chunk.match(new RegExp(`^//!${k} (.*)$`, 'm'))?.[1]?.trim();
+  const desc = dir('DESC');
+  const binds = [...chunk.matchAll(/^\/\/!BIND (\S+)$/gm)].map((m) => m[1]);
+  const save = dir('SAVE') ?? null;
+  const p = { desc, binds, save, hook: chunk.split('\n')[0].trim(), width: dir('WIDTH') ?? null };
+  if (desc === 'aggregation') {
+    passes.push({ name: 'aggregate', desc, kind: 'aggregate', in: binds, out: null, scale: 2 });
+    continue;
+  }
+  const bias = chunk.match(/vec4 res = vec4\(([^)]*)\);/);
+  if (!bias) throw new Error(`${desc}: no bias`);
+  const terms = [];
+  let skip = null;
+  for (const m of chunk.matchAll(/res \+= (vec4|mat4x4|mat4)\(([^)]*)\) \* (?:float\()?(\w+)_texOff\((?:vec2\((-?\d+),(-?\d+)\)|0)\)\)?;/g)) {
+    terms.push({ kind: m[1] === 'vec4' ? 'vec' : 'mat', w: num(m[2]), src: m[3], dx: m[4] === undefined ? 0 : Number(m[4]), dy: m[5] === undefined ? 0 : Number(m[5]) });
+  }
+  for (const m of chunk.matchAll(/res \+= (\w+)_texOff\(0\);/g)) skip = m[1];
+  const prelu = chunk.match(/res = max\(res, vec4\(0\.0\)\) \+ vec4\(([^)]*)\) \* min\(res, vec4\(0\.0\)\);/);
+  // every weight line must have been consumed
+  const lines = (chunk.match(/^res \+=/gm) ?? []).length;
+  if (lines !== terms.length + (skip ? 1 : 0)) throw new Error(`${desc}: ${lines} accumulate lines, parsed ${terms.length + (skip ? 1 : 0)}`);
+  const biasOff = push(num(bias[1]), 4);
+  const preluOff = prelu ? push(num(prelu[1]), 4) : null;
+  const outTerms = terms.map((t) => ({ src: t.src, dx: t.dx, dy: t.dy, offset: push(t.w, t.kind === 'vec' ? 4 : 16) }));
+  // canonical order the WGSL relies on: x-major then y, then one term per input
+  const radius = Math.max(...terms.map((t) => Math.abs(t.dx)), ...terms.map((t) => Math.abs(t.dy)));
+  const inputs = [...new Set(terms.map((t) => t.src))];
+  const expect = [];
+  for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) for (const s of inputs) expect.push(`${s}@${dx},${dy}`);
+  const got = terms.map((t) => `${t.src}@${t.dx},${t.dy}`);
+  if (expect.join('|') !== got.join('|')) throw new Error(`${desc}: non-canonical term order`);
+  const scalar = terms.every((t) => t.kind === 'vec');
+  passes.push({
+    name: desc.replace(/[^a-z0-9]+/gi, '_').toLowerCase(),
+    desc,
+    kind: scalar ? 'luma-conv' : 'conv',
+    in: inputs,
+    out: save,
+    radius,
+    bias: biasOff,
+    prelu: preluOff,
+    skip,
+    terms: outTerms,
+  });
+}
+
+const buf = Buffer.alloc(HEADER_BYTES + floats.length * 4);
+buf.write(header, 0, 'ascii');
+floats.forEach((v, i) => buf.writeFloatLE(v, HEADER_BYTES + i * 4));
+mkdirSync(join(root, 'web/public'), { recursive: true });
+writeFileSync(join(root, 'web/public/fsrcnnx-8-0-4-1.bin'), buf);
+
+const ts = `// SPDX-License-Identifier: LGPL-3.0-or-later
+// GENERATED by scripts/fsrcnnx-extract.mjs from FSRCNNX_x2_8-0-4-1.glsl (Copyright (C) 2017-2021 igv, LGPL-3.0-or-later,
+// https://github.com/igv/FSRCNN-TensorFlow). Do not edit; regenerate with:
+//   node scripts/fsrcnnx-extract.mjs [path/to/FSRCNNX_x2_8-0-4-1.glsl]
+// Licence text: LICENSES/FSRCNNX-LGPL-3.0.txt.
+//
+// Data file web/public/fsrcnnx-8-0-4-1.bin = FSRCNNX_HEADER_BYTES of ASCII notice, then FSRCNNX_FLOAT_COUNT little-endian f32.
+// All "offset"/"bias"/"prelu" values are float indices into that f32 array (multiples of 4, so also vec4 indices x 4).
+// Per pass block, in file order: bias (4), prelu alphas (4, only when "prelu" is not null), then one weight block per term.
+//   'luma-conv': term weights are vec4 (4 out channels) multiplying the scalar luma tap: out[i] += w[i] * luma.
+//   'conv'     : term weights are 16 floats, a GLSL column-major mat4: out[i] += sum_j w[j*4+i] * in[j] (in = 4-channel texel).
+// PReLU: out = max(x,0) + alpha * min(x,0). 'skip' (when set) is added to the pre-activation sum (residual connection).
+// Terms are ordered x-major, then y, then one term per input (the order the WGSL indexes them).
+// 'aggregate': out(ox,oy) = SUBCONV[floor(ox/2), floor(oy/2)][ (ox&1)*2 + (oy&1) ] (mpv sub-pixel shuffle), output 2x.
+
+export const FSRCNNX_HEADER_BYTES = ${HEADER_BYTES};
+export const FSRCNNX_FLOAT_COUNT = ${floats.length};
+
+export interface FsrcnnxTerm {
+  src: string;
+  dx: number;
+  dy: number;
+  offset: number;
+}
+export interface FsrcnnxConvPass {
+  name: string;
+  desc: string;
+  kind: 'luma-conv' | 'conv';
+  in: readonly string[];
+  out: string | null;
+  radius: number;
+  bias: number;
+  prelu: number | null;
+  skip: string | null;
+  terms: readonly FsrcnnxTerm[];
+}
+export interface FsrcnnxAggregatePass {
+  name: 'aggregate';
+  desc: string;
+  kind: 'aggregate';
+  in: readonly string[];
+  out: null;
+  scale: number;
+}
+export type FsrcnnxPassLayout = FsrcnnxConvPass | FsrcnnxAggregatePass;
+
+export const FSRCNNX_PASSES: readonly FsrcnnxPassLayout[] = ${JSON.stringify(passes, null, 1).replace(/\n\s*/g, ' ').replace(/\{ "name"/g, '\n  { "name"').replace(/\[ \{ "name"/, '[\n  { "name"').replace(/\s*\]$/, '\n]')};
+`;
+writeFileSync(join(root, 'web/src/gpu/upscale/fsrcnnx-layout.ts'), ts);
+console.log(`wrote ${floats.length} floats (${buf.length} bytes), ${passes.length} passes`);

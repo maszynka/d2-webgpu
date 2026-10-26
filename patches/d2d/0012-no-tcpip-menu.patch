@@ -1,0 +1,21 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0012: frontend.cpp other_multiplayer_ui: under the web build the TCP/IP GAME entry is disabled (target = this screen, as OPEN BATTLE.NET), so no multiplayer socket can be opened from the browser.
+
+diff -ru a/apps/d2d/frontend.cpp b/apps/d2d/frontend.cpp
+--- a/apps/d2d/frontend.cpp	2026-10-24 01:59:16
++++ b/apps/d2d/frontend.cpp	2026-10-24 01:59:16
+@@ -696,7 +696,13 @@
+     static constexpr Entry kEntries[] = { { 310, 0x13fb, "OPEN BATTLE.NET", Screen::OtherMultiplayer },
+                                           { 350, 0x13fc, "TCP/IP GAME", Screen::TcpIp },
+                                           { 568, 0x13ef, "CANCEL", Screen::Title } };
+-    for (const auto& [y, tbl_id, fallback, target] : kEntries) {
++    for (const auto& [y, tbl_id, fallback, target_] : kEntries) {
++#ifdef D2WEB
++        // Nothing leaves the browser: the TCP/IP entry stays but is disabled (it points back at this screen, like Battle.net).
++        const Screen target = target_ == Screen::TcpIp ? Screen::OtherMultiplayer : target_;
++#else
++        const Screen target = target_;
++#endif
+         const auto found = lookup_string(scene, std::uint16_t(tbl_id));
+         menu.labels.push_back(found ? u16_to_latin1(*found) : std::string(fallback));
+         menu.buttons.push_back(Button{ 264, rec_top(y, 35), 272, 35, menu.labels.back().c_str(), &scene.btn_wide,

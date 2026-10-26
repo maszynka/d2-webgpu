@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// web/dist (app + wasm + bundled source archive) served by worker/index.ts (public; optional password gate when the
+// SITE_PASSWORD secret is set). No game data.
+{
+  "name": "d2-webgpu",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  // cookieless visit counts (worker/index.ts, POST /api/visit)
+  "analytics_engine_datasets": [{ "binding": "VISITS", "dataset": "d2_webgpu_visits" }]
+}
