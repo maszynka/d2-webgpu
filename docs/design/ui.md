@@ -660,3 +660,14 @@ E4 — game failed (bar shown + pinned, last frame dimmed behind):
 * Required archives for Play: d2data, d2exp, d2char, patch_d2 (`REQUIRED_MPQS` in `web/src/assets/mpq.ts`); sound/video archives optional (game verified to run without them).
 * A remembered folder never autostarts the game; picking, dropping or "Reconnect" this visit does (`d2.autoplay` checkbox).
 * `#play-btn` lives in the bar (visible once files are loaded), not in the tools popover. Not implemented: the pick-button menu ("Forget this folder"), drag-handle persistence beyond `store.set`, the `Copy` button in the debug overlay (E4 has `Copy log`).
+
+### Saves: backup and import (2026-10-26)
+
+⚙ Tools → **Saves** row: `#saves-export` "Download backup" and `#saves-import` "Import saves…" (hidden `#saves-file` input,
+`.zip,.d2s,.key,.ma0-.ma3`). The welcome card's folder side mentions it in one line. Code: `web/src/saves/` (ZIP, IDBFS
+store access, import plan).
+* Backup = ZIP of everything under `/idb` (`d2d/save/*.d2s`, `*.key`, `d2d/d2d.cfg`), named `d2-webgpu-saves-YYYY-MM-DD.zip`.
+  While the game runs the worker writes IndexedDB first (`FullGame.flushSaves`).
+* Import: a backup ZIP restores in place; a loose `.d2s` (version 92-96) goes to `d2d/save/<name inside the file>.d2s`.
+  Anything else is skipped and listed in the status. Replacing existing files, or stopping a running game, asks first
+  (`confirm`); a running game is stopped (it saves on quit) before the write, so its next sync cannot drop the imported files.

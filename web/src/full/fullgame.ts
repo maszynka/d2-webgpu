@@ -63,6 +63,8 @@ export class FullGame {
   private readonly ctlWaiting = new Map<number, (text: string) => void>();
   private frameTimes: number[] = [];
   private readonly flushedResolvers: (() => void)[] = [];
+  private readonly flushWaiting = new Map<number, () => void>();
+  private flushId = 0;
 
   constructor(
     private readonly renderer: Renderer,
@@ -150,6 +152,10 @@ export class FullGame {
         break;
       case 'synced':
         this.stats.synced = m.saves;
+        break;
+      case 'flushDone':
+        this.flushWaiting.get(m.id)?.();
+        this.flushWaiting.delete(m.id);
         break;
       case 'status':
         this.stats.status = m.text;
@@ -372,11 +378,21 @@ export class FullGame {
     this.queue(r);
   }
 
+  /** Write the user dir to IndexedDB now; resolves once a write that started after this call has finished (or a timeout). */
+  async flushSaves(timeoutMs = 5000): Promise<void> {
+    if (!this.worker || this.stats.exited !== null) return;
+    const id = ++this.flushId;
+    const done = new Promise<void>((resolve) => this.flushWaiting.set(id, resolve));
+    this.send({ t: 'flush', id });
+    await Promise.race([done, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
+    this.flushWaiting.delete(id);
+  }
+
   /**
    * Quit the game (it saves the character), wait until the worker has written IndexedDB (or a timeout), then drop
    * the worker, so two workers never touch IDBFS at once.
    */
-  async stop(timeoutMs = 8000): Promise<void> {
+  async stop(timeoutMs = 12_000): Promise<void> {
     for (const f of this.cleanup.splice(0)) f();
     const w = this.worker;
     if (!w) return;

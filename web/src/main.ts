@@ -18,6 +18,9 @@ import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui
 import type { UiInfo as UiFrameInfo } from './full/uitrailer';
 import { registerFakeStage } from './gpu/fakestage';
 import { registerStage, STAGE_MODES, unregisterStage } from './gpu/upscale/registry';
+import { backupName, backupZip, characterNames, isSaveEntry, MAX_IMPORT_FILE, MAX_SAVE_FILE, overwrites, planImport } from './saves/backup';
+import { listFiles, writeFiles } from './saves/store';
+import { readZip } from './saves/zip';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
 import { FSR_BUDGET_MS, FsrAutoCheck, initialAutoMode } from './gpu/autoquality';
 import { bindDivider } from './ui/divider';
@@ -588,6 +591,7 @@ async function main(): Promise<void> {
     if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
     panel.closePopovers();
     await pendingStop; // never two workers on IndexedDB at once
+    await saveOp; // nor a worker while an import writes IndexedDB (its first sync would drop the imported files)
     canvas.style.cursor = 'none';
     document.body.classList.add('playing');
     canvas.setAttribute('aria-label', 'Diablo II');
@@ -617,6 +621,9 @@ async function main(): Promise<void> {
     syncOverlay();
   };
   let pendingStop: Promise<void> = Promise.resolve();
+  /** an import's stop + IndexedDB write; play() waits for it */
+  let saveOp: Promise<void> = Promise.resolve();
+  let importing = false;
   const stopFull = async (): Promise<void> => {
     const g = full;
     if (!g) return;
@@ -640,6 +647,84 @@ async function main(): Promise<void> {
     hideFailed();
     await stopFull();
     panel.setStatus('Game stopped.');
+  };
+  // save backup / import (src/saves). The game worker owns IndexedDB while it runs: a backup asks it to write first,
+  // an import stops it (it saves on quit) before writing, so the worker's next sync cannot drop the imported files.
+  const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+  $('saves-export').addEventListener('click', () => {
+    void (async () => {
+      try {
+        await full?.flushSaves();
+        const files = await listFiles();
+        if (files.length === 0) {
+          panel.setStatus('No saved characters in this browser yet.');
+          return;
+        }
+        const url = URL.createObjectURL(new Blob([backupZip(files) as Uint8Array<ArrayBuffer>], { type: 'application/zip' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = backupName();
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        const names = characterNames(files);
+        panel.setStatus(`Backup downloaded: ${names.length} character${names.length === 1 ? '' : 's'}${names.length ? ` (${names.join(', ')})` : ''}.`);
+      } catch (e) {
+        panel.setStatus(`Backup failed: ${errText(e)}`, true);
+      }
+    })();
+  });
+  $('saves-import').addEventListener('click', () => $('saves-file').click());
+  $('saves-file').addEventListener('change', (ev) => {
+    const input = ev.target as HTMLInputElement;
+    const picked = [...(input.files ?? [])];
+    input.value = ''; // the same file can be picked again
+    void importSaves(picked);
+  });
+  const importSaves = async (picked: File[]): Promise<void> => {
+    if (picked.length === 0) return;
+    if (importing) {
+      panel.setStatus('An import is already running.', true);
+      return;
+    }
+    importing = true;
+    try {
+      const items: { name: string; data: Uint8Array }[] = [];
+      for (const f of picked) {
+        if (f.size > MAX_IMPORT_FILE) throw new Error(`${f.name} is too large for a save or a backup`);
+        const data = new Uint8Array(await f.arrayBuffer());
+        if (/\.zip$/i.test(f.name)) items.push(...(await readZip(data, { accept: isSaveEntry, maxEntry: MAX_SAVE_FILE, maxTotal: MAX_IMPORT_FILE })));
+        else items.push({ name: f.name, data });
+      }
+      const plan = planImport(items);
+      const skipped = plan.skipped.map((s) => `${s.name} (${s.reason})`).join(', ');
+      if (plan.writes.length === 0) {
+        panel.setStatus(`Nothing to import${skipped ? `: ${skipped}` : ''}.`, true);
+        return;
+      }
+      await full?.flushSaves();
+      const replace = overwrites(plan, await listFiles());
+      const what = plan.characters.length ? plan.characters.join(', ') : `${plan.writes.length} file${plan.writes.length === 1 ? '' : 's'}`;
+      const notes = [full ? 'The game will be stopped first (it saves your character).' : '', replace.length ? `This replaces: ${replace.join(', ')}.` : ''].filter(Boolean);
+      if (notes.length && !confirm(`Import ${what}?\n\n${notes.join('\n')}`)) return;
+      // set synchronously, before any other handler runs: a Play click from here on waits for the write
+      const op = (async () => {
+        if (full) {
+          hideFailed();
+          const stopping = stopFull();
+          showDemo();
+          await stopping;
+        }
+        await pendingStop; // never write while a worker may still sync
+        await writeFiles(plan.writes);
+      })();
+      saveOp = op.catch(() => undefined);
+      await op;
+      panel.setStatus(`Imported ${what}${skipped ? `; skipped ${skipped}` : ''}. They are in the game's character list.`);
+    } catch (e) {
+      panel.setStatus(`Import failed: ${errText(e)}`, true);
+    } finally {
+      importing = false;
+    }
   };
   $('game-restart').addEventListener('click', () => {
     hideFailed();

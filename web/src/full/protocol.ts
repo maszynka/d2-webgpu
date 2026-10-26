@@ -13,8 +13,9 @@ export type ToWorker =
   | { t: 'recycle'; buf: ArrayBuffer | null; want: boolean }
   /** quit the game, write the user dir, then reply `flushed` (the page waits for it before dropping the worker) */
   | { t: 'stop' }
-  /** write the IDBFS user dir (saves, config) to IndexedDB now */
-  | { t: 'flush' }
+  /** write the IDBFS user dir (saves, config) to IndexedDB now; with an id, `flushDone` answers once a write that
+   *  started after this request has finished */
+  | { t: 'flush'; id?: number }
   /** a devctl command line (upstream verbs: state, debug level, cmd move ...); answered by `ctlReply` with the same id */
   | { t: 'ctl'; id: number; line: string };
 
@@ -27,5 +28,6 @@ export type FromWorker =
   /** IndexedDB write finished (after a character save or a periodic / pagehide flush) */
   | { t: 'synced'; saves: number }
   | { t: 'flushed' }
+  | { t: 'flushDone'; id: number }
   | { t: 'exit'; code: number }
   | { t: 'error'; message: string };
