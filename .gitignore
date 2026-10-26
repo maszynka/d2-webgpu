@@ -2,7 +2,6 @@ node_modules/
 dist/
 build/
 build-*/
-.reviews/
 *.log
 .DS_Store
 web/public/d2core.*

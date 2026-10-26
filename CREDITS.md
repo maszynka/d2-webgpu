@@ -52,4 +52,4 @@ installation, locally in the browser. Nothing from them is committed, hosted, up
 
 ## This project
 
-Written by Daniel Bogusz with AI coding agents (Anthropic Claude; Google Gemini as a reviewer). Licence: GPL-3.0-or-later.
+Written by Daniel Bogusz with AI coding agents (Anthropic Claude, Google Gemini). Licence: GPL-3.0-or-later.

@@ -77,7 +77,7 @@ This project stands on other people's work. The game engine is **d2decomped** by
 the upscalers are ports of work by AMD, Dennis Smolek (pmndrs), Sp00kyFox, Hyllian and igv. Full list with licences:
 [CREDITS.md](CREDITS.md).
 
-Written with AI coding agents (Claude; Gemini as a reviewer), directed and reviewed by the author.
+Written with AI coding agents (Claude, Gemini), directed by the author.
 
 ## Legal
 
