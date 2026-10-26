@@ -4,15 +4,15 @@
 // Copyright (C) 2017-2021 igv) into
 //   web/public/fsrcnnx-8-0-4-1.bin             512-byte ASCII notice header + little-endian f32 data
 //   web/src/gpu/upscale/fsrcnnx-layout.ts       generated offsets/shapes per pass
-// Usage: node scripts/fsrcnnx-extract.mjs [path/to/FSRCNNX_x2_8-0-4-1.glsl]
-// Default source: ~/projects/3rd-party/upscalers/fsrcnnx-release/FSRCNNX_x2_8-0-4-1.glsl (igv/FSRCNN-TensorFlow release 1.1).
+// Usage: node scripts/fsrcnnx-extract.mjs path/to/FSRCNNX_x2_8-0-4-1.glsl
+// Source: a local copy of FSRCNNX_x2_8-0-4-1.glsl (igv/FSRCNN-TensorFlow release 1.1).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const srcPath = process.argv[2] ?? join(homedir(), 'projects/3rd-party/upscalers/fsrcnnx-release/FSRCNNX_x2_8-0-4-1.glsl');
+const srcPath = process.argv[2];
+if (!srcPath) throw new Error('usage: node scripts/fsrcnnx-extract.mjs path/to/FSRCNNX_x2_8-0-4-1.glsl');
 const text = readFileSync(srcPath, 'utf8');
 
 const HEADER_BYTES = 512;

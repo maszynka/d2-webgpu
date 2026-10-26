@@ -159,7 +159,7 @@ test.describe('De-dither toggle', () => {
     test.setTimeout(120_000);
     const errors = watch(page);
     await open(page, '/');
-    await page.locator('#tools-btn').click();
+    await page.locator('#display-btn').click();
     const box = page.locator('#dedither');
     await expect(box).toBeHidden(); // fsr1
     await useStage(page, 'smooth-scalefx');
@@ -180,8 +180,30 @@ test.describe('De-dither toggle', () => {
     await page.goto('/?dedither=0&present=smooth-sxbr');
     await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
     expect(await dedither(page)).toBe(false);
-    await page.locator('#tools-btn').click();
+    await page.locator('#display-btn').click();
     await expect(page.locator('#dedither')).not.toBeChecked();
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('default upscaler', () => {
+  test('with no pick the page chooses for the GPU; ?present= and the select win', async ({ page }) => {
+    const errors = watch(page);
+    await open(page, '/');
+    const fallback = await page.evaluate(() => !!(window.__d2!.adapter as { isFallback?: boolean } | null)?.isFallback);
+    const p = await present(page);
+    // a software adapter (SwiftShader here, normally) starts on bilinear; a real GPU starts on FSR1 and keeps it under budget
+    expect(p.mode).toBe(fallback ? 'bilinear' : 'fsr1');
+    if (fallback) expect(await page.getAttribute('#present', 'title')).toMatch(/Auto: bilinear/);
+    // the viewer's pick is not overridden
+    await page.selectOption('#present', 'fsr1');
+    await page.waitForFunction(() => window.__d2!.present!.mode === 'fsr1');
+    const f0 = await page.evaluate(() => window.__d2!.frames);
+    await page.waitForFunction((k) => window.__d2!.frames > k + 40, f0, { timeout: 60_000 });
+    expect((await present(page)).mode).toBe('fsr1');
+    // and an explicit ?present= is kept from the start
+    await open(page, '/?present=fsr1');
+    expect((await present(page)).mode).toBe('fsr1');
     expect(errors).toEqual([]);
   });
 });

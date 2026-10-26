@@ -42,8 +42,9 @@ test('synthetic MPQ through the folder input and the DC6 viewer', async ({ page 
   await page.click('#mpq-continue');
   await expect(page.locator('#mpq-missing')).toBeHidden();
   expect(await page.getAttribute('#mode', 'title')).toContain('d2exp.mpq');
-  await page.selectOption('#mode', 'view'); // opens the tools popover
+  await page.click('#tools-btn'); // the scene select lives in the tools popover
   await expect(page.locator('#game-tools')).toBeVisible();
+  await page.selectOption('#mode', 'view');
 
   await page.fill('#path', 'data\\global\\ui\\tiny.dc6');
   await page.fill('#pal', 'data\\global\\palette\\pal.dat');

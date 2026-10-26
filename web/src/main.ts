@@ -17,11 +17,12 @@ import { FullscreenController } from './ui/fullscreen';
 import { Panel, type FolderResult, type PanelHandlers, type UiState } from './ui/panel';
 import type { UiInfo as UiFrameInfo } from './full/uitrailer';
 import { registerFakeStage } from './gpu/fakestage';
-import { register as registerFsrcnnx } from './gpu/upscale/fsrcnnx';
 import { registerStage, STAGE_MODES, unregisterStage } from './gpu/upscale/registry';
-import { register as registerSmooth } from './gpu/upscale/smooth';
 import { bindPresentControls, readStored, writeStored } from './ui/present';
+import { FSR_BUDGET_MS, FsrAutoCheck, initialAutoMode } from './gpu/autoquality';
 import { bindDivider } from './ui/divider';
+import { bindUpscaleStrip } from './ui/display';
+import { bindWelcome } from './ui/welcome';
 import { bindLoupe } from './ui/loupe';
 import { bindHud } from './ui/hud';
 import { FullGame, type FullGameStats } from './full/fullgame';
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
   // The panel and bar exist before the renderer so that an unsupported browser still gets the bar (About, errors).
   const impl: Partial<PanelHandlers> = {};
   let ui: UiState = 'nofiles';
+  let panelState: (s: UiState) => void = (s) => (ui = s);
   const panel = new Panel(
     {
       onFolder: (f, l, fresh) => impl.onFolder!(f, l, fresh),
@@ -125,10 +127,48 @@ async function main(): Promise<void> {
       onVolume: (v) => impl.onVolume?.(v),
     },
     undefined,
-    (s) => (ui = s),
+    (s) => panelState(s),
   );
   const bar = new Bar($('bar'), document.body, () => panel.popoverOpen);
-  panel.onPopover = () => bar.armHide();
+  // the upscaling strip stays in the bar while it fits, else it lives in the Display popover (ui/display.ts)
+  const strip = bindUpscaleStrip($('bar'), $('upscale'), $('upscale-slot'), $('display-btn'), () => panel.popoverOpen);
+  panel.onPopover = () => {
+    bar.armHide();
+    strip.relayout();
+  };
+  // the welcome cards (checks + folder picker) stay until a folder is open, a tool scene is shown or compare is on
+  const welcome = bindWelcome($('bar'), () => strip.relayout());
+  let compareOn = false;
+  // a visitor who touches a display setting (or arrives with one in the URL) is inspecting the renderer: the cards get
+  // out of the picture for this load; the folder button is back in the bar
+  let welcomeDismissed = ['present', 'sharp', 'compare', 'cmpA', 'cmpB', 'loupe', 'hud', 'ui', 'density', 'dedither', 'mode'].some((k) => params.has(k));
+  const syncWelcome = (): void =>
+    welcome.setVisible(
+      !welcomeDismissed && ['nofiles', 'reconnect', 'loading'].includes(ui) && (window.__d2?.mode ?? 'demo') === 'demo' && !compareOn && $('nogpu').hidden === true,
+    );
+  const dismissWelcome = (): void => {
+    if (!welcome.shown) return;
+    welcomeDismissed = true;
+    syncWelcome();
+  };
+  $('welcome-close').addEventListener('click', dismissWelcome);
+  for (const id of ['upscale', 'display']) {
+    $(id).addEventListener('change', dismissWelcome);
+    $(id).addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('button')) dismissWelcome();
+    });
+  }
+  panelState = (s) => {
+    ui = s;
+    syncWelcome();
+  };
+  syncWelcome();
+  /** the first usable control of the bar itself (not a popover): where Ctrl+Shift+B puts the focus */
+  const firstBarControl = (): HTMLElement | null => {
+    for (const c of $('bar').querySelectorAll<HTMLElement>('button, select, input'))
+      if (!c.closest('.popover') && !c.hidden && !(c as HTMLButtonElement).disabled && c.offsetParent !== null && c.getClientRects().length > 0 && c.offsetWidth > 1) return c;
+    return null;
+  };
   bar.onHidden = () => {
     if (full) canvas.focus({ preventScroll: true });
   };
@@ -170,6 +210,9 @@ async function main(): Promise<void> {
   const noGpu = (reason: string): void => {
     $('nogpu').hidden = false;
     $('nogpu-reason').textContent = reason;
+    welcome.setCheck('gpu', 'fail', reason);
+    welcome.setCheck('core', 'fail', 'not run: no WebGPU');
+    syncWelcome();
     canvas.style.display = 'none';
     panel.setEnabled(false);
     $<HTMLButtonElement>('fs-btn').disabled = true;
@@ -191,15 +234,43 @@ async function main(): Promise<void> {
     return;
   }
   console.info('WebGPU adapter:', JSON.stringify(renderer.adapterInfo));
-  // world upscalers: smooth (dedither + ScaleFX / Super-xBR) builds synchronously, FSRCNNX fetches its weights
-  registerSmooth(registerStage, () => ({ dedither: renderer.dedither }));
-  registerFsrcnnx(registerStage);
+  {
+    const a = renderer.adapterInfo;
+    welcome.setCheck('gpu', 'ok', `${[a.vendor, a.architecture, a.description].filter(Boolean).join(' / ') || 'adapter'}${a.isFallback ? ' (software adapter: slow)' : ''}`);
+  }
+  // world upscalers, code-split: a stage's module (and FSRCNNX's weights) is fetched the first time its mode is picked
+  const smooth = () => import('./gpu/upscale/smooth');
+  registerStage('smooth-scalefx', async (d) => (await smooth()).createSmoothScaleFx(d, { dedither: renderer.dedither }));
+  registerStage('smooth-sxbr', async (d) => (await smooth()).createSmoothSuperXbr(d, { dedither: renderer.dedither }));
+  registerStage('fsrcnnx', async (d) => (await import('./gpu/upscale/fsrcnnx')).createFsrcnnx(d));
   const presentCtl = bindPresentControls(renderer, params);
+  // FSR1 by default where the GPU carries it; the viewer's own pick (select, ?present=, storage) always wins
+  const fsrAuto = new FsrAutoCheck();
+  let fsrAutoSeen = -1;
+  if (presentCtl.auto && initialAutoMode(renderer.adapterInfo.isFallback) === 'bilinear') {
+    presentCtl.setAutoMode('bilinear', 'Auto: bilinear (software WebGPU adapter, FSR1 would be too slow)');
+    fsrAuto.cancel();
+  }
+  const checkFsrAuto = (): void => {
+    if (fsrAuto.decided) return;
+    if (!presentCtl.auto) return fsrAuto.cancel();
+    if (renderer.presentCount === fsrAutoSeen) return; // a repaint-free frame carries the last info again
+    fsrAutoSeen = renderer.presentCount;
+    const v = fsrAuto.feed(renderer.lastPresent);
+    if (!v) return;
+    console.info(`auto upscaler: FSR1 EASU+RCAS ${v.ms.toFixed(1)} ms (budget ${FSR_BUDGET_MS} ms) -> ${v.kind}`);
+    if (v.kind === 'downgrade') presentCtl.setAutoMode('bilinear', `Auto: bilinear (FSR1 took ${v.ms.toFixed(1)} ms per frame on this GPU)`);
+  };
   const loupeCtl = bindLoupe(renderer, canvas, params);
   const hud = bindHud(params, readStored, writeStored, presentCtl.compare.on);
   presentCtl.onChange(() => {
     hud.compareChanged(presentCtl.compare.on);
+    strip.relayout(); // compare on / off changes the strip's width
+    compareOn = presentCtl.compare.on;
+    syncWelcome(); // the divider's thumb sits where the cards are: compare puts them away
   });
+  compareOn = presentCtl.compare.on;
+  syncWelcome();
   bindDivider(presentCtl, canvas, () => {
     if (full) canvas.focus({ preventScroll: true });
   });
@@ -339,7 +410,7 @@ async function main(): Promise<void> {
             if (full) canvas.focus({ preventScroll: true });
           } else {
             bar.reveal();
-            $<HTMLSelectElement>('mode').focus();
+            firstBarControl()?.focus();
           }
         }
       } else if (e.code === 'KeyG') {
@@ -378,6 +449,7 @@ async function main(): Promise<void> {
     state.mode = 'demo';
     panel.setMode('demo');
     lightUi.set('smooth', DEMO_AMBIENT);
+    syncWelcome();
   };
 
   // WASM core (optional): falls back to demo mode without /d2core.js
@@ -449,6 +521,7 @@ async function main(): Promise<void> {
     camera.setZoom(b.w > 0 ? Math.max(1, Math.floor(Math.min(renderer.sceneW / b.w, renderer.sceneH / b.h))) : 1);
     state.mode = 'view';
     panel.setMode('view');
+    syncWelcome();
     lightUi.set('off', 0.5);
     panel.setStatus(`${req.path}: ${dc6.directions} dir x ${dc6.framesPerDirection} frames, showing direction ${Math.min(req.direction, Math.max(0, dc6.directions - 1))}${req.mosaic ? ' (all frames)' : ''}`);
   };
@@ -480,6 +553,7 @@ async function main(): Promise<void> {
     camera.setZoom(1);
     state.mode = 'map';
     panel.setMode('map');
+    syncWelcome();
     lightUi.set('off', 0.3);
     panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
   };
@@ -586,6 +660,7 @@ async function main(): Promise<void> {
     core = client;
     state.core = status;
     console.info('d2core:', JSON.stringify(status));
+    welcome.setCheck('core', status.mode === 'wasm' ? 'ok' : 'fail', status.mode === 'wasm' ? `d2core.wasm ${status.version}` : status.reason);
     if (client) void panel.restore();
     else {
       panel.setEnabled(false);
@@ -651,6 +726,7 @@ async function main(): Promise<void> {
   const frame = (now: number): void => {
     publishUi();
     hud.update(now, renderer.presentCount, full ? full.stats.frames : null, renderer.lastPresent);
+    checkFsrAuto();
     if (full) {
       full.tick();
       if (renderer.presentDirty) renderer.repaint(); // divider / loupe / mode changed between game frames

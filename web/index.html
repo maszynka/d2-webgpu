@@ -12,52 +12,73 @@
       <header id="bar" role="toolbar" aria-label="d2-webgpu controls">
         <button id="brand" type="button" aria-expanded="false" aria-controls="about">d2-webgpu</button>
 
-        <button id="pick" type="button">Open game folder&hellip;</button>
-        <label id="folder-label" class="btn" title="Fallback for browsers without the File System Access API">Open game folder&hellip;
+        <!-- the one primary action: open the game folder (picker, or the <input webkitdirectory> fallback), or reconnect it -->
+        <button id="pick" type="button" class="primary" title="Open your Diablo II folder (the files never leave your browser)">Open game folder&hellip;</button>
+        <label id="folder-label" class="btn primary" title="Fallback for browsers without the File System Access API"><span id="folder-name">Open game folder&hellip;</span>
           <input id="folder" type="file" webkitdirectory multiple />
         </label>
         <button id="regrant" type="button" class="primary" hidden>Reconnect saved folder</button>
-
-        <select id="mode" aria-label="Mode">
-          <option value="play">Play</option>
-          <option value="demo" selected>Demo</option>
-          <option value="view">Viewer</option>
-          <option value="map">Map</option>
-        </select>
         <button id="play-btn" type="button" hidden title="Run the full game (needs d2full.wasm)">Play</button>
-        <button id="tools-btn" type="button" aria-label="Mode tools" title="Mode tools" aria-expanded="false" aria-controls="game-tools">&#9881;</button>
 
         <span id="game-status" role="status" aria-live="polite">No game folder yet. Open a folder or drop it here.</span>
 
-        <button id="cmp-btn" type="button" aria-pressed="false" title="Compare two presentation modes side by side (draggable divider)">Compare</button>
-        <select id="present" aria-label="Upscaling"></select>
-        <select id="cmp-a" aria-label="Compare mode A (left)" title="A: left of the divider" hidden></select>
-        <input id="cmp-sharp-a" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness A" title="A: RCAS sharpness (0 sharpest)" hidden />
-        <select id="cmp-b" aria-label="Compare mode B (right)" title="B: right of the divider" hidden></select>
-        <input id="cmp-sharp-b" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness B" title="B: RCAS sharpness (0 sharpest)" hidden />
-        <select id="cmp-preset" aria-label="Compare presets" title="A/B presets" hidden></select>
-        <input id="sharp" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="FSR sharpness" title="RCAS sharpness (0 sharpest)" />
-        <button id="loupe-btn" type="button" aria-pressed="false" title="Loupe: magnify the pixels under the pointer (Ctrl+Shift+L; Ctrl+wheel = zoom)">Loupe</button>
-        <select id="loupe-zoom" aria-label="Loupe zoom" title="Loupe zoom (Ctrl+wheel)" hidden></select>
-        <button id="loupe-src" type="button" aria-pressed="false" title="Loupe shows the native frame pixels instead of the presented output" hidden>src</button>
-        <button id="hud-btn" type="button" aria-pressed="false" title="HUD: fps, resolution, mode (Ctrl+Shift+H)">HUD</button>
+        <!-- world upscaler + A/B compare: inline while the bar has room, otherwise moved into the Display popover (ui/display.ts) -->
+        <div id="upscale" class="group" role="group" aria-label="Upscaling">
+          <select id="present" aria-label="Upscaling"></select>
+          <input id="sharp" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="FSR sharpness" title="RCAS sharpness (0 sharpest)" />
+          <button id="cmp-btn" type="button" aria-pressed="false" title="Compare two presentation modes side by side (draggable divider)">Compare</button>
+          <select id="cmp-a" aria-label="Compare mode A (left)" title="A: left of the divider" hidden></select>
+          <input id="cmp-sharp-a" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness A" title="A: RCAS sharpness (0 sharpest)" hidden />
+          <select id="cmp-b" aria-label="Compare mode B (right)" title="B: right of the divider" hidden></select>
+          <input id="cmp-sharp-b" type="range" min="0" max="2" step="0.05" value="0.2" aria-label="Sharpness B" title="B: RCAS sharpness (0 sharpest)" hidden />
+          <select id="cmp-preset" aria-label="Compare presets" title="A/B presets" hidden></select>
+        </div>
+        <button id="display-btn" type="button" title="Display: loupe, HUD, menu scaler, render density" aria-expanded="false" aria-controls="display">Display</button>
+        <button id="tools-btn" type="button" aria-label="Tools" title="Tools: test scene, DC6 viewer, map, lighting, volume" aria-expanded="false" aria-controls="game-tools">&#9881;</button>
         <button id="fs-btn" type="button" aria-label="Fullscreen" title="Fullscreen (Alt+Enter, Ctrl+Shift+F)" aria-pressed="false">&#9974;</button>
         <button id="debug-btn" type="button" aria-label="Debug overlay" title="Debug overlay (Ctrl+Shift+G)" aria-pressed="false">{}</button>
         <button id="pin-btn" type="button" aria-label="Keep the bar visible" title="Keep the bar visible" aria-pressed="false" hidden>pin</button>
 
         <div id="progress" role="progressbar" aria-hidden="true" hidden><div class="fill"></div></div>
 
-        <section id="game-tools" class="popover" hidden aria-label="Mode tools">
+        <section id="display" class="popover" hidden aria-label="Display">
+          <div class="row" id="upscale-slot"><span class="k">Upscaling</span></div>
+          <div class="row">
+            <span class="k">Inspect</span>
+            <button id="loupe-btn" type="button" aria-pressed="false" title="Loupe: magnify the pixels under the pointer (Ctrl+Shift+L; Ctrl+wheel = zoom)">Loupe</button>
+            <select id="loupe-zoom" aria-label="Loupe zoom" title="Loupe zoom (Ctrl+wheel)" hidden></select>
+            <button id="loupe-src" type="button" aria-pressed="false" title="Loupe shows the native frame pixels instead of the presented output" hidden>src</button>
+            <button id="hud-btn" type="button" aria-pressed="false" title="HUD: fps, resolution, mode (Ctrl+Shift+H)">HUD</button>
+          </div>
+          <div class="row" id="display-tools">
+            <label>Menus/HUD
+              <select id="ui-scaler" title="Scaler for menus, HUD and panels (the world uses the Upscaling mode)"></select>
+            </label>
+            <label>Render density
+              <select id="density" title="Retina (auto): render at device pixels. 1x: render at CSS pixels and let the browser scale the canvas (about a quarter of the GPU work at DPR 2)."></select>
+            </label>
+            <label hidden><input id="dedither" type="checkbox" checked title="Remove D2's checkerboard / stripe dithering before the smooth upscalers (?dedither=0)" /> De-dither</label>
+          </div>
+        </section>
+        <section id="game-tools" class="popover" hidden aria-label="Tools">
+          <div class="row">
+            <!-- not wrapped in a <label>: Playwright retargets an <option> inside a label to the label's control -->
+            <span class="k">Scene</span>
+            <select id="mode" aria-label="Scene">
+              <option value="play">Game</option>
+              <option value="demo" selected>Test scene</option>
+              <option value="view">DC6 viewer</option>
+              <option value="map">Map (DS1)</option>
+            </select>
+            <button id="demo-btn" type="button" title="The built-in test scene (no game files)">Test scene</button>
+          </div>
           <div class="row"><label>path <input id="path" type="text" list="known-paths" spellcheck="false" autocomplete="off" /></label><datalist id="known-paths"></datalist></div>
           <div class="row">
             <label>palette <input id="pal" type="text" list="known-pals" spellcheck="false" autocomplete="off" /></label><datalist id="known-pals"></datalist>
             <label>dir <input id="dir" type="number" min="0" value="0" /></label>
             <label><input id="mosaic" type="checkbox" /> all frames</label>
-          </div>
-          <div class="row">
             <button id="view-btn" type="button">View DC6</button>
             <button id="map-btn" type="button">Load map</button>
-            <button id="demo-btn" type="button">Demo</button>
           </div>
           <div class="row" id="light-tools">
             <label>lighting
@@ -68,15 +89,6 @@
               </select>
             </label>
             <label>ambient <input id="ambient" type="range" min="0" max="1" step="0.01" value="0.16" /> <output id="ambient-val">0.16</output></label>
-          </div>
-          <div class="row" id="display-tools">
-            <label>Menus/HUD
-              <select id="ui-scaler" title="Scaler for menus, HUD and panels (the world uses the Upscaling mode)"></select>
-            </label>
-            <label>Render density
-              <select id="density" title="Retina (auto): render at device pixels. 1x: render at CSS pixels and let the browser scale the canvas (about a quarter of the GPU work at DPR 2)."></select>
-            </label>
-            <label hidden><input id="dedither" type="checkbox" checked title="Remove D2's checkerboard / stripe dithering before the smooth upscalers (?dedither=0)" /> De-dither</label>
           </div>
           <div class="row">
             <label>volume <input id="volume" type="range" min="0" max="100" value="100" /></label>
@@ -93,6 +105,35 @@
 
       <main id="stage">
         <canvas id="view" aria-label="Scene" tabindex="0"></canvas>
+        <!-- shown until a game folder is open: browser checks + the folder picker (its buttons are the bar's, moved here) -->
+        <div id="welcome" hidden>
+          <section class="card" aria-labelledby="checks-title">
+            <h2 id="checks-title">Run test in browser</h2>
+            <ul class="checks">
+              <li id="chk-gpu" data-state="pending"><span class="box" aria-hidden="true">&hellip;</span> <b>WebGPU</b> <span class="why dim">checking the adapter&hellip;</span></li>
+              <li id="chk-core" data-state="pending"><span class="box" aria-hidden="true">&hellip;</span> <b>Engine test</b> <span class="why dim">starting d2core.wasm&hellip;</span></li>
+            </ul>
+            <p class="dim">The test scene behind these cards is drawn by the renderer; no game data is involved.</p>
+          </section>
+          <section class="card" aria-labelledby="open-title">
+            <button id="welcome-close" type="button" aria-label="Close" title="Close (the folder button moves to the bar)">&times;</button>
+            <h2 id="open-title">Browse your PC for the Diablo II: LoD folder</h2>
+            <p class="dim">The folder with <code>d2data.mpq</code>, <code>d2exp.mpq</code>, <code>patch_d2.mpq</code>&hellip; It is read in your browser and never uploaded.</p>
+            <div id="open-slot" class="actions"></div>
+            <p class="dim">&hellip;or drop the folder anywhere on this page.</p>
+            <details id="files-help">
+              <summary>Which files do I need?</summary>
+              <p>All of them sit in the Diablo II install folder after installing Diablo II + Lord of Destruction (patch 1.14d).</p>
+              <p><b>Required to play:</b> <code>d2data.mpq</code>, <code>d2exp.mpq</code>, <code>d2char.mpq</code>, <code>patch_d2.mpq</code>.</p>
+              <p><b>Recommended:</b> <code>d2sfx.mpq</code>, <code>d2speech.mpq</code> &mdash; sound effects and voices.</p>
+              <p><b>Optional:</b> <code>d2music.mpq</code>, <code>d2xmusic.mpq</code>, <code>d2xtalk.mpq</code>, <code>d2video.mpq</code>, <code>d2xvideo.mpq</code> &mdash; music, Act V voices and cinematics.</p>
+              <p>I do not encourage getting the files from illegal places. You can still buy the game on Battle.net (remember you need Lord of Destruction as well):
+                <a href="https://eu.shop.battle.net/en-us/product/diablo-ii" target="_blank" rel="noopener noreferrer">Diablo II</a> and
+                <a href="https://eu.shop.battle.net/en-us/product/diablo-ii-lord-of-destruction?p=462" target="_blank" rel="noopener noreferrer">Diablo II: Lord of Destruction</a>.
+                Or search for deals on sites like <a href="https://gg.deals/search/pc/?title=diablo+2" target="_blank" rel="noopener noreferrer">gg.deals</a>.</p>
+            </details>
+          </section>
+        </div>
         <div id="drop" class="overlay" hidden><div class="card">Drop your Diablo II folder here</div></div>
         <div id="nogpu" class="overlay" role="alert" hidden><div class="card">
           <h2>WebGPU is not available</h2>
@@ -103,6 +144,9 @@
           <h2 id="mpq-missing-title">Missing game archives</h2>
           <p id="mpq-missing-list"></p>
           <p id="mpq-found-list" class="dim"></p>
+          <p class="dim">Play needs <code>d2data</code>, <code>d2exp</code>, <code>d2char</code> and <code>patch_d2</code> from a Diablo II + Lord of Destruction (1.14d) install folder
+            (<a href="https://eu.shop.battle.net/en-us/product/diablo-ii" target="_blank" rel="noopener noreferrer">Diablo II</a>,
+            <a href="https://eu.shop.battle.net/en-us/product/diablo-ii-lord-of-destruction?p=462" target="_blank" rel="noopener noreferrer">Lord of Destruction</a> on Battle.net).</p>
           <div class="actions"><button id="mpq-retry" type="button" class="primary">Choose another folder&hellip;</button><button id="mpq-continue" type="button">Continue anyway</button></div>
         </div></div>
         <div id="game-failed" class="overlay" role="alertdialog" aria-labelledby="game-failed-title" hidden><div class="card">
@@ -112,7 +156,7 @@
             <button id="game-restart" type="button" class="primary">Restart</button>
             <button id="game-copylog" type="button">Copy log</button>
             <button id="game-details" type="button">Details</button>
-            <button id="game-demo" type="button">Back to demo</button>
+            <button id="game-demo" type="button">Back to the test scene</button>
           </div>
         </div></div>
         <div id="cmp-chips" aria-hidden="true"><span id="cmp-chip-a" class="chip" hidden></span><span id="cmp-chip-b" class="chip" hidden></span></div>

@@ -150,7 +150,7 @@ test('presentation modes (FSR1, nearest, bilinear) render without WebGPU errors 
 test('the canvas fills the viewport (letterboxed frame, 1920x1080)', async ({ page }) => {
   const errors = watchErrors(page);
   await page.setViewportSize({ width: 1920, height: 1080 });
-  await page.goto('/');
+  await page.goto('/?present=fsr1'); // explicit: the auto default is bilinear on a software adapter
   test.skip(!(await page.evaluate(() => 'gpu' in navigator && !!navigator.gpu)), 'WebGPU not available in this headless Chromium');
   await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 5, undefined, { timeout: 30_000 });
   const box = (await page.locator('canvas#view').boundingBox())!;

@@ -12,6 +12,7 @@
   --acc: #c8a24a;
   --acc-dim: #7a6430;
   --err: #e06c6c;
+  --ok: #7fb37a;
   --ctl-bg: #1a1a20;
   --ctl-line: #3a3a44;
   --radius: 4px;
@@ -35,16 +36,26 @@ body.bar-over #bar.hidden { transform: translateY(-100%); }
   border: 1px solid var(--ctl-line); border-radius: var(--radius); cursor: pointer; max-width: 9em; }
 #bar .btn { display: inline-flex; align-items: center; position: relative; }
 #bar button:hover:not(:disabled), #bar select:hover, #bar .btn:hover { border-color: var(--acc-dim); }
-#bar .primary { border-color: var(--acc); }
+/* the one primary action (open / reconnect the folder, then Play): gold border on a warm fill */
+#bar .primary { border-color: var(--acc); background: #231d10; color: #ece2c4; }
+#bar .primary:hover:not(:disabled) { border-color: #e0b85a; background: #2b2414; }
 #bar button:disabled, #bar select:disabled { opacity: 0.45; cursor: default; }
 #bar button[aria-pressed='true'] { background: #23232b; border-color: var(--acc-dim); }
 #brand { color: var(--acc) !important; border-color: transparent !important; background: transparent !important; padding: 0 4px !important; }
-#bar #pick, #bar #folder-label { max-width: none; white-space: nowrap; }
+/* the folder button reads "Open game folder..." and then the folder's name (clipped) */
+#bar #pick, #bar #folder-label { max-width: 14em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+#folder-name { overflow: hidden; text-overflow: ellipsis; }
+#bar > button, #bar > select { flex-shrink: 0; }
+/* the upscaling strip: a tighter cluster than the bar's own gap; in the Display popover (narrow bars) it wraps */
+#upscale { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.popover #upscale { flex-wrap: wrap; gap: 6px 8px; }
+#upscale-slot:not(:has(#upscale)) { display: none; }
 #cmp-a[hidden], #cmp-sharp-a[hidden], #cmp-sharp-b[hidden], #cmp-preset[hidden], #cmp-b[hidden], #present[hidden], #loupe-zoom[hidden], #loupe-src[hidden], #pick[hidden], #folder-label[hidden], #regrant[hidden], #play-btn[hidden], #pin-btn[hidden], #sharp[hidden] { display: none; }
 #folder-label input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-#game-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+/* the status gives way first, but keeps a readable minimum: past that the upscaling strip folds into Display (ui/display.ts) */
+#game-status { flex: 1; min-width: 8em; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
 #game-status.err { color: var(--err); }
-#sharp, #cmp-sharp-a, #cmp-sharp-b { width: 72px; }
+#sharp, #cmp-sharp-a, #cmp-sharp-b { width: 72px; margin: 0; }
 #progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; overflow: hidden; }
 #progress[hidden] { display: none; }
 #progress .fill { height: 100%; background: var(--acc); width: 30%; animation: slide 1.2s linear infinite; }
@@ -56,7 +67,10 @@ body.bar-over #bar.hidden { transform: translateY(-100%); }
   display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); white-space: normal; line-height: 1.4; }
 .popover[hidden] { display: none; }
 .popover .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-.popover label { color: var(--dim); }
+.popover label, .popover .k { color: var(--dim); }
+/* Display: anchored to its button at the right edge */
+#display { left: auto; right: 8px; width: max-content; max-width: min(640px, calc(100vw - 16px)); }
+#bar .popover select { max-width: none; }
 .popover input[type='text'] { width: 100%; min-width: 0; }
 .popover input[type='text'], .popover input[type='number'], .popover select, .popover button {
   font: inherit; color: var(--fg); background: var(--ctl-bg); border: 1px solid var(--ctl-line); border-radius: var(--radius); padding: 3px 8px; }
@@ -77,12 +91,45 @@ body.playing canvas#view:focus-visible { outline: none; }
 .card button { font: inherit; color: var(--fg); background: var(--ctl-bg); border: 1px solid var(--ctl-line); border-radius: var(--radius); padding: 5px 10px; cursor: pointer; }
 .card button.primary { border-color: var(--acc); }
 #game-failed { background: rgb(0 0 0 / 0.4); }
+/* welcome cards (no folder yet): two side by side, one column when narrow; the scene stays draggable between them */
+#welcome { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px;
+  align-content: safe center; max-width: 760px; margin: 0 auto; padding: 24px; box-sizing: border-box; overflow: auto; pointer-events: none; }
+#welcome[hidden] { display: none; }
+#welcome .card { position: relative; pointer-events: auto; max-width: none; min-width: 0; }
+#welcome .card p { margin: 8px 0 0; }
+#welcome #open-title { padding-right: 28px; }
+#welcome .card code, .card code { font: var(--mono); color: var(--fg); }
+.card a { color: var(--acc); }
+#files-help { margin-top: 10px; font-size: 12px; line-height: 1.4; color: var(--dim); }
+#files-help summary { cursor: pointer; color: var(--fg); }
+#files-help summary:hover { color: var(--acc); }
+#files-help p { margin: 6px 0 0; }
+#files-help b { color: var(--fg); font-weight: 600; }
+#welcome .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+#welcome .checks li { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
+#welcome .checks .why { flex-basis: 100%; padding-left: 26px; }
+#welcome .box { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--ctl-line); border-radius: 3px; font-size: 12px; line-height: 1; color: var(--dim); }
+#welcome li[data-state='ok'] .box { color: var(--ok); border-color: var(--ok); }
+#welcome li[data-state='fail'] .box { color: var(--err); border-color: var(--err); }
+#welcome li[data-state='fail'] .why { color: var(--err); }
+#welcome .actions { justify-content: flex-start; margin-top: 14px; }
+/* the bar's folder buttons, grown to card size while they live here */
+#welcome .actions button, #welcome .actions .btn { position: relative; display: inline-flex; align-items: center; font: inherit; font-size: 13px; color: var(--fg); background: var(--ctl-bg);
+  border: 1px solid var(--ctl-line); border-radius: var(--radius); padding: 8px 14px; cursor: pointer; max-width: 100%; }
+#welcome .actions .primary { border-color: var(--acc); background: #231d10; color: #ece2c4; }
+#welcome .actions button:hover:not(:disabled), #welcome .actions .btn:hover { border-color: var(--acc); }
+#welcome .actions button:disabled { opacity: 0.45; cursor: default; }
+#welcome .actions .primary:hover:not(:disabled) { background: #2b2414; }
+#welcome .actions [hidden] { display: none; }
+#welcome-close { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; pointer-events: auto; font: inherit; font-size: 16px; line-height: 1;
+  color: var(--dim); background: transparent; border: 1px solid transparent; border-radius: var(--radius); cursor: pointer; }
+#welcome-close:hover { color: var(--fg); border-color: var(--ctl-line); }
 #debug { position: absolute; top: 8px; right: 8px; z-index: 4; margin: 0; padding: 8px 10px; max-width: 40em; white-space: pre-wrap;
   font: var(--mono); background: rgb(0 0 0 / 0.72); border-radius: var(--radius); pointer-events: none; }
 #debug[hidden] { display: none; }
 :focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 @media (max-width: 720px) { #brand { display: none; } }
-@media (max-width: 560px) { #sharp, #cmp-sharp-a, #cmp-sharp-b { display: none; } }
+@media (max-width: 480px) { #bar { gap: 6px; padding: 0 6px; } #bar #pick, #bar #folder-label { max-width: 11em; } }
 
 /* compare divider, chips, HUD: only the divider handle takes pointer events */
 #hud { position: absolute; top: 8px; left: 8px; z-index: 4; margin: 0; padding: 6px 8px; font: var(--mono); background: rgb(0 0 0 / 0.72);

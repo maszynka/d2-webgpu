@@ -88,7 +88,7 @@ d2-webgpu runs Diablo II LoD (C++ d2decomped compiled to WASM, in a Worker) and 
   - GPL-2.0-only would be incompatible with GPL-3.0-or-later, so any GPL-2.0-only file must not be used.
   - Record each file's license and copyright.
 - **FSRCNNX** (igv/FSRCNN-TensorFlow, the generated `.glsl`): check the repository license (expected MIT) and the generated file header.
-- **References** are cloned read-only to `~/projects/3rd-party/upscalers/`, using a sparse checkout of the needed directories only. Nothing outside our own ports is vendored into the repo.
+- **References** are cloned read-only to a local directory outside the repo, using a sparse checkout of the needed directories only. Nothing outside our own ports is vendored into the repo.
 
 ## Architecture changes
 
@@ -161,7 +161,7 @@ The panel was run with `plan-review --author claude`. Results:
 
 ### Licence check done before implementation
 
-The sources are in `~/projects/3rd-party/upscalers/`:
+The sources (local read-only clones of the upstream repositories):
 - **ScaleFX** (Sp00kyFox, `edge-smoothing/scalefx/shaders/*.slang`): MIT. Usable.
 - **Super-xBR** (Hyllian, `edge-smoothing/xbr/shaders/super-xbr/*.slang`): MIT. Usable.
 - **gdapt / mdapt** (Sp00kyFox): no licence header at all, so they cannot be copied. The dedither instead uses `checkerboard-dedither` (MIT), plus our own simple vertical-line/checker detector written from scratch.

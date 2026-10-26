@@ -75,6 +75,10 @@ export interface PresentControls {
   /** de-dither the world before the smooth stages (?dedither=0 turns it off; default on) */
   dedither: boolean;
   compare: CompareControlState;
+  /** no mode from ?present= or storage: the page picks FSR1 or bilinear for this GPU (src/gpu/autoquality.ts) */
+  auto: boolean;
+  /** the page's pick while `auto` (not persisted); `note` explains it on the select's tooltip */
+  setAutoMode(mode: PresentMode, note: string): void;
   /** the divider moved (drag / keys): apply + persist */
   setSplit(split: number, persist?: boolean): void;
   onChange(fn: () => void): void;
@@ -139,6 +143,13 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
       sharpA: 0,
       sharpB: 0,
       split: clampSplit(urlSplit !== null && Number.isFinite(Number(urlSplit)) ? Number(urlSplit) : storedSplit !== null && Number.isFinite(Number(storedSplit)) ? Number(storedSplit) : DEFAULT_SPLIT),
+    },
+    auto: urlMode === null && readStored(K_MODE) === null,
+    setAutoMode(mode, note) {
+      if (!c.auto) return;
+      c.mode = mode;
+      if (sel) sel.title = note;
+      apply();
     },
     setSplit(split, persist = true) {
       c.compare.split = clampSplit(split);
@@ -210,6 +221,8 @@ export function bindPresentControls(target: Target, params: URLSearchParams = ne
     apply();
   });
   sel?.addEventListener('change', () => {
+    c.auto = false; // the viewer's pick wins from now on
+    sel.title = '';
     c.mode = parsePresentMode(sel.value);
     writeStored(K_MODE, c.mode);
     apply();
