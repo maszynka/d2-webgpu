@@ -137,6 +137,7 @@ test('compare: the divider drags (not a game click), moves with the keyboard, an
 test('loupe: magnifies the presented pixels in k x k blocks, also across the divider', async ({ page }) => {
   const errors = watch(page);
   await open(page, '/?compare=1&cmpA=bilinear&cmpB=fsr1&hud=1&loupe=1');
+  await page.click('#display-btn'); // the loupe controls live in the Display popover
   for (const k of [8, 4]) {
     await page.selectOption('#loupe-zoom', String(k));
     await page.mouse.move(640 - 60, 330);
@@ -197,7 +198,7 @@ test('loupe: magnifies the presented pixels in k x k blocks, also across the div
 });
 
 test('HUD: source and output resolution, a live fps, mode', async ({ page }) => {
-  await open(page, '/?hud=1');
+  await open(page, '/?hud=1&present=fsr1'); // explicit: the auto default is bilinear on a software adapter
   const hud = page.locator('#hud');
   await expect(hud).toBeVisible();
   await page.waitForFunction(() => /(\d+\.\d) fps/.test(document.getElementById('hud')?.textContent ?? '') && Number(/(\d+\.\d) fps/.exec(document.getElementById('hud')!.textContent!)![1]) > 0, undefined, { timeout: 15_000 });
@@ -207,7 +208,8 @@ test('HUD: source and output resolution, a live fps, mode', async ({ page }) => 
   expect(t).toMatch(/output \d+x\d+ px/);
   expect(t).toMatch(/mode FSR1 \(easu-rcas\)/);
   await page.screenshot({ path: `${shotDir}/cmp-hud.png` });
-  // toggle: button, and Ctrl+Shift+H
+  // toggle: button (in the Display popover), and Ctrl+Shift+H
+  await page.click('#display-btn');
   await page.click('#hud-btn');
   await expect(hud).toBeHidden();
   await page.locator('canvas#view').focus();
@@ -326,6 +328,7 @@ test('FSR chains do not pile up across mode and size changes; select titles are 
     await frames(page);
     expect(await chains()).toBeLessThanOrEqual(1);
   }
+  await page.setViewportSize({ width: 1280, height: 700 }); // wide again: the A/B selects are back in the bar
   await page.selectOption('#cmp-a', 'bilinear');
   await page.selectOption('#cmp-b', 'nearest');
   await frames(page);

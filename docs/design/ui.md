@@ -232,6 +232,67 @@ Controls (all in the tools popover `#game-tools`, row `#display-tools`; the worl
 * Test hooks on `window.__d2`: `setUi(info)` (synthetic UI rects for the demo), `getUi()`, `textures()` (created / destroyed /
   live textures incl. stages and resamplers), `registerFakeStage(mode)` (a trivial 2x nearest stage, `gpu/fakestage.ts`), `unregisterStages()`. The standalone GPU test pages (`web/test-pages/`) are served by a vite dev server started inside their specs, not by the app build, so they never reach `web/dist`.
 
+### 2.10 Bar layout, welcome cards, Display popover (2026-10-26)
+
+Request: *"Drop the demo idea, keep only the load button. Work out an improved top bar."* The planned "official Blizzard
+demo" option is cancelled; nothing in the UI offers one. The one primary action is opening the game folder.
+
+```
+S1 no-files (≥ ~1000 px)
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ d2-webgpu  No game folder yet. Open a folder or drop it here.   [FSR1 ▾][━●━][Compare] [Display] ⚙ ⛶ {} │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+                 ┌──────────────────────────┐ ┌──────────────────────────────┐
+                 │ Run test in browser      │ │ Browse your PC for the       │
+                 │ [✓] WebGPU  <adapter>    │ │ Diablo II: LoD folder        │
+                 │ [✓] Engine test  <core>  │ │ [ Open game folder… ]        │   ← #pick / #folder-label / #regrant
+                 └──────────────────────────┘ │ …or drop it anywhere         │
+                                              └──────────────────────────────┘
+S3 ready / S4 playing
+│ d2-webgpu [Diablo II] [Play]  Diablo II: 11 MPQ opened   [FSR1 ▾][━●━][Compare] [Display] ⚙ ⛶ {} pin │
+
+narrow (< ~560 px, or compare on below ~1100 px): the upscaling strip folds into Display
+│ No game folder yet…                                                      [Display] ⚙ ⛶ {} │
+```
+
+* **Primary action.** `#pick` (or the `#folder-label` fallback) and `#regrant` are the bar's own controls, but while the
+  welcome cards are shown (`#welcome`: states `nofiles`/`reconnect`/`loading`, test scene, compare off, WebGPU present)
+  they are **moved** into the right card's `#open-slot` (`ui/welcome.ts`; moved, never cloned, so ids and listeners are
+  unchanged) and grown to card size. Once a folder is open they move back in front of `#play-btn`, `#pick` reads the
+  folder's name (tooltip: "open another one") and Play becomes the primary (gold) control. One control is `.primary` at a
+  time: reconnect > open > Play.
+* **Welcome checks.** Left card: `WebGPU` (adapter vendor / architecture, "software adapter: slow" for SwiftShader; ✗ with
+  the reason when `Renderer.create` fails) and `Engine test` (`d2core.wasm <version>`, or ✗ with the loader's reason). They
+  run at start, no button. Cards stack in one column below ~560 px (`grid auto-fit minmax(260px)`); the scene between
+  them stays draggable (`pointer-events: none` on the grid, `auto` on the cards). The `#nogpu` alert replaces the cards.
+  The right card also carries a `<details id="files-help">` "Which files do I need?": required / optional archives
+  (`MPQ_ORDER`), where they come from (a Diablo II + LoD 1.14d install) and the owner's Battle.net / gg.deals links
+  (`target=_blank rel="noopener noreferrer"`); the missing-archives card repeats the required list and the shop links.
+* **Dismissal.** The cards go for this page load when the visitor touches a display control (any `change` in `#upscale`
+  or `#display`, a button click there), arrives with a presentation / scene URL param (`present sharp compare cmpA cmpB
+  loupe hud ui density dedither mode`), or clicks the card's `×` (`#welcome-close`). Rationale: someone inspecting the
+  renderer wants the frame unobstructed (and canvas-screenshot e2e tests see a clean frame); the folder button is then
+  back in the bar as the primary control.
+* **Upscaling strip** `#upscale` (`role=group`): `#present`, `#sharp`, `#cmp-btn` and, with compare on, `#cmp-a`,
+  `#cmp-sharp-a`, `#cmp-b`, `#cmp-sharp-b`, `#cmp-preset`. It sits in the bar while the bar has room (`ui/display.ts`:
+  put it in the bar, `scrollWidth > clientWidth`? → move it into the Display popover's first row `#upscale-slot`;
+  re-measured on bar resize, on every presentation change and when a popover closes; never while focus is inside it or a
+  popover is open). `#game-status` keeps `min-width: 8em`, so the status stays legible and the strip folds instead.
+* **Display popover** `#display` (button `#display-btn`, right-anchored, `aria-expanded`/`aria-controls`): the folded
+  strip, then Inspect (`#loupe-btn`, `#loupe-zoom`, `#loupe-src`, `#hud-btn`), then `#display-tools` (`#ui-scaler`,
+  `#density`, `#dedither`). Esc closes it and returns focus to `#display-btn` (over the game: to the canvas); a press
+  outside closes it; it keeps the overlay bar up while open, like the other two.
+* **Tools popover** `#game-tools` (⚙ `#tools-btn`, `aria-label="Tools"`): now also holds the scene select `#mode`
+  (labels `Game` / `Test scene` / `DC6 viewer` / `Map (DS1)`; values unchanged) and `#demo-btn` ("Test scene"). The word
+  "demo" survives only in ids, URL values (`?mode=demo`) and `window.__d2.mode`; the user sees "test scene".
+* `Ctrl+Shift+B` focuses the bar's first usable control (`#brand` when the window is ≥ 720 px wide) instead of `#mode`.
+* Unchanged: auto-hide/overlay rules (§2.3–2.4, `bar.ts`), fullscreen (§2.6), hotkeys (§2.5), compare / loupe / HUD
+  behaviour (§2.8), the FSR1 auto-default (the auto note stays on `#present`'s `title`).
+* e2e: specs that drove `#loupe-zoom`, `#loupe-src`, `#hud-btn`, `#density`, `#ui-scaler`, `#dedither` now open
+  `#display-btn` first (`compare`, `upscale-a`, `upscale-int`); `#mode` is reached through `#tools-btn` (`mpq`, `full`);
+  `ui.spec` expects `#brand` after Ctrl+Shift+B and uses `#present` as the focused select for the hotkey test;
+  `compare.spec` resets the viewport to 1280 px before touching the A/B selects after its 900 px pass.
+
 ## 3. Game surface
 
 ### 3.1 Layout

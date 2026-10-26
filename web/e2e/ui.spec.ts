@@ -169,11 +169,11 @@ test('fullscreen: the bar becomes an auto-hiding overlay, Ctrl+Shift+F / Alt+Ent
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.fullscreen)).toBe(true);
 });
 
-test('keyboard: Ctrl+Shift+B reveals the bar and focuses the mode select; from a select it collapses it again', async ({ page }) => {
+test('keyboard: Ctrl+Shift+B reveals the bar and focuses its first control; from a select it collapses it again', async ({ page }) => {
   await ready(page);
   await page.locator('canvas#view').focus();
   await page.keyboard.press('Control+Shift+KeyB');
-  await expect(page.locator('#mode')).toBeFocused();
+  await expect(page.locator('#brand')).toBeFocused();
   // no focus guard: the chord also works with focus on a select (it hides the revealed overlay bar again)
   await page.keyboard.press('Control+Shift+KeyB');
   await expect.poll(() => page.evaluate(() => window.__d2?.ui?.bar)).not.toBe('overlay-visible');
@@ -193,7 +193,7 @@ test('hotkeys: F9-F12 and Backquote are not ours (D2 binds them); Ctrl+Shift cho
   for (const k of ['F9', 'F10', 'F11', 'F12', 'Backquote']) expect(kd[k], k).toBe(false); // reached the game's phase, not prevented
   await expect(page.locator('#debug')).toBeHidden();
   // Ctrl+Shift+G from a focused select
-  await page.locator('#mode').focus();
+  await page.locator('#present').focus();
   await page.keyboard.press('Control+Shift+KeyG');
   await expect(page.locator('#debug')).toBeVisible();
   // opt-out

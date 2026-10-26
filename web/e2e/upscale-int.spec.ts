@@ -159,7 +159,7 @@ test.describe('De-dither toggle', () => {
     test.setTimeout(120_000);
     const errors = watch(page);
     await open(page, '/');
-    await page.locator('#tools-btn').click();
+    await page.locator('#display-btn').click();
     const box = page.locator('#dedither');
     await expect(box).toBeHidden(); // fsr1
     await useStage(page, 'smooth-scalefx');
@@ -180,7 +180,7 @@ test.describe('De-dither toggle', () => {
     await page.goto('/?dedither=0&present=smooth-sxbr');
     await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
     expect(await dedither(page)).toBe(false);
-    await page.locator('#tools-btn').click();
+    await page.locator('#display-btn').click();
     await expect(page.locator('#dedither')).not.toBeChecked();
     expect(errors).toEqual([]);
   });

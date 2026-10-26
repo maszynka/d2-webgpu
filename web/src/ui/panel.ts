@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// DOM glue for the bar's game-files controls: folder picker / fallback input / drop / reconnect, the mode select, the
-// tools popover, status line, progress strip and the missing-archives card (index.html, docs/design/ui.md).
+// DOM glue for the bar's game-files controls: folder picker / fallback input / drop / reconnect, Play, the status line,
+// the progress strip, the missing-archives card, and the three popovers (Display, Tools with the scene select, About)
+// (index.html, docs/design/ui.md 2.10).
 
 import { DEFAULT_MAP, KNOWN_PALETTES, KNOWN_PATHS, ACT1_PALETTE } from '../assets/mpq';
 import {
@@ -76,8 +77,16 @@ export class Panel {
   private readonly status = el('game-status');
   private readonly tools = el('game-tools');
   private readonly about = el('about');
+  private readonly display = el('display');
   private readonly toolsBtn = el<HTMLButtonElement>('tools-btn');
   private readonly brand = el<HTMLButtonElement>('brand');
+  private readonly displayBtn = el<HTMLButtonElement>('display-btn');
+  /** popover -> the button that opens it (focus goes back there on Escape) */
+  private readonly popovers: readonly (readonly [HTMLElement, HTMLButtonElement])[] = [
+    [this.tools, this.toolsBtn],
+    [this.about, this.brand],
+    [this.display, this.displayBtn],
+  ];
   private readonly mode = el<HTMLSelectElement>('mode');
   private readonly playBtn = el<HTMLButtonElement>('play-btn');
   private readonly path = el<HTMLInputElement>('path');
@@ -87,6 +96,7 @@ export class Panel {
   private readonly regrantBtn = el<HTMLButtonElement>('regrant');
   private readonly pickBtn = el<HTMLButtonElement>('pick');
   private readonly folderLabel = el('folder-label');
+  private readonly folderName = el('folder-name');
   private readonly progress = el('progress');
   private readonly missing = el('mpq-missing');
   private pending: FsDirHandle | null = null;
@@ -139,16 +149,15 @@ export class Panel {
       else if (m === 'demo') h.onDemo();
       else this.togglePopover(this.tools, true);
     });
-    this.toolsBtn.addEventListener('click', () => this.togglePopover(this.tools));
-    this.brand.addEventListener('click', () => this.togglePopover(this.about));
-    for (const pop of [this.tools, this.about]) {
+    for (const [pop, btn] of this.popovers) {
+      btn.addEventListener('click', () => this.togglePopover(pop));
       pop.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
           this.closePopovers();
           // over the game (overlay bar) the keys go back to the surface; otherwise focus returns to the trigger
           if (this.dismissToSurface()) this.onDismiss();
-          else (pop === this.tools ? this.toolsBtn : this.brand).focus();
+          else btn.focus();
         }
       });
     }
@@ -180,21 +189,20 @@ export class Panel {
   // --- popovers -------------------------------------------------------------
 
   get popoverOpen(): boolean {
-    return !this.tools.hidden || !this.about.hidden;
+    return this.popovers.some(([pop]) => !pop.hidden);
   }
 
   private togglePopover(pop: HTMLElement, open?: boolean): void {
     const show = open ?? pop.hidden;
     this.closePopovers(false);
     pop.hidden = !show;
-    const btn = pop === this.tools ? this.toolsBtn : this.brand;
-    btn.setAttribute('aria-expanded', String(show));
+    this.popovers.find(([p]) => p === pop)?.[1].setAttribute('aria-expanded', String(show));
     this.onPopover();
   }
 
-  /** `restore`: put the mode select back on what is shown (Viewer/Map picked, then the popover dismissed). */
+  /** `restore`: put the scene select back on what is shown (Viewer/Map picked, then the popover dismissed). */
   closePopovers(restore = true): void {
-    for (const [pop, btn] of [[this.tools, this.toolsBtn], [this.about, this.brand]] as const) {
+    for (const [pop, btn] of this.popovers) {
       pop.hidden = true;
       btn.setAttribute('aria-expanded', 'false');
     }
@@ -265,8 +273,21 @@ export class Panel {
     this.playBtn.disabled = !this.canPlay && !this.isPlaying;
     this.playBtn.title = this.canPlay || this.isPlaying ? 'Run the full game' : this.playWhy;
     this.playBtn.classList.toggle('primary', this.canPlay && !this.isPlaying);
+    // one primary action at a time: reconnect, else open a folder, else Play
+    const openIsPrimary = !this.hasFiles && this.regrantBtn.hidden === true;
+    for (const e of [this.pickBtn, this.folderLabel]) e.classList.toggle('primary', openIsPrimary);
     for (const e of [this.pickBtn, this.regrantBtn, el<HTMLInputElement>('folder')]) e.disabled = !this.enabled;
     this.mode.disabled = !this.enabled;
+  }
+
+  /** The folder button reads the folder's name once one is open (its tooltip says it opens another). */
+  private setFolderLabel(name: string | null): void {
+    const text = name ?? 'Open game folder\u2026';
+    const title = name ? `Game folder "${name}" \u2014 open another one\u2026` : 'Open your Diablo II folder (the files never leave your browser)';
+    this.pickBtn.textContent = text;
+    this.pickBtn.title = title;
+    this.folderName.textContent = text;
+    this.folderLabel.title = name ? title : 'Fallback for browsers without the File System Access API';
   }
 
   /** The mode select follows what is shown. */
@@ -314,6 +335,7 @@ export class Panel {
     try {
       const r = await this.h.onFolder(files, label, fresh);
       this.setStatus(r.status, r.error);
+      this.setFolderLabel(label);
       this.setFiles(true, r.canPlay, r.canPlay ? '' : `Missing required archives: ${r.requiredMissing.join(', ')}`);
       this.setState('ready');
       if (r.requiredMissing.length > 0) {
@@ -370,6 +392,7 @@ export class Panel {
       if (!(await reGrant(handle))) throw new Error('Read access to the saved folder was not granted.');
       this.regrantBtn.hidden = true;
       this.pending = null;
+      this.syncCapabilities();
       await this.useHandle(handle, true); // a click this visit: counts as picking
     });
   }
@@ -383,6 +406,7 @@ export class Panel {
       this.pending = r.handle;
       this.regrantBtn.textContent = `Reconnect "${r.handle.name}"`;
       this.regrantBtn.hidden = false;
+      this.syncCapabilities();
       this.setState('reconnect');
       this.setStatus(`Saved game folder "${r.handle.name}" needs read access again.`);
     }

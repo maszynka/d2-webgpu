@@ -461,7 +461,8 @@ test('ui: autoplay on pick, the page becomes the game, the bar hides and returns
   await expect(page.locator('#game-failed')).toBeHidden();
   await page.waitForFunction(() => window.__d2?.mode === 'full' && (window.__d2?.full?.shown ?? 0) > 5, undefined, { timeout: 240_000 });
 
-  // back to the demo from the mode select
+  // back to the demo from the scene select (in the tools popover)
+  await page.click('#tools-btn');
   await page.selectOption('#mode', 'demo');
   await expect.poll(() => page.evaluate(() => window.__d2?.mode), { timeout: 20_000 }).toBe('demo');
   expect(await page.evaluate(() => document.body.classList.contains('playing'))).toBe(false);

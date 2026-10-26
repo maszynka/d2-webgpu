@@ -136,7 +136,7 @@ test.describe('world stage seam (fake 2x stage)', () => {
       const auto = await size();
       expect(auto.cw).toBe(auto.css * 2);
       expect(auto.eff).toBeCloseTo(2, 2);
-      await page.locator('#tools-btn').click();
+      await page.locator('#display-btn').click();
       await page.selectOption('#density', '1');
       await page.keyboard.press('Escape');
       await frames(page);
@@ -168,7 +168,7 @@ test.describe('world stage seam (fake 2x stage)', () => {
 test.describe('menus / HUD UI scaler', () => {
   test('with a synthetic UI rect, ui=sharp vs ui=world differs only inside the mask', async ({ page }) => {
     const errors = watch(page);
-    await open(page, '/?ui=world');
+    await open(page, '/?ui=world&present=fsr1'); // explicit: the auto default is bilinear on a software adapter
     await freeze(page);
     frozen = true;
     await page.evaluate(() => window.__d2!.setUi!({ screen: 1, rects: [{ x: 120, y: 200, w: 200, h: 150 }] }));
@@ -244,7 +244,7 @@ test.describe('menus / HUD UI scaler', () => {
     await page.goto('/');
     await page.waitForFunction(() => (window.__d2?.frames ?? 0) > 3);
     expect(await page.evaluate(() => (window.__d2!.ui!.present as { ui: string }).ui)).toBe('sharp'); // default
-    await page.locator('#tools-btn').click();
+    await page.locator('#display-btn').click();
     await page.selectOption('#ui-scaler', 'world');
     expect(await page.evaluate(() => localStorage.getItem('d2.ui'))).toBe('world');
     await page.reload();
