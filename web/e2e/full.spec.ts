@@ -203,6 +203,7 @@ test('full game F2: new character, camp, walking, Blood Moor, fight, save, reloa
   expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
 
   // --- reload the page: the character is in the list --------------------------------------------------
+  page.once('dialog', (d) => void d.accept()); // the game still runs (menus): the page asks before unloading
   await page.reload();
   await openAndPlay(page);
   await page.waitForTimeout(1500);
@@ -465,6 +466,7 @@ test('ui: autoplay on pick, the page becomes the game, the bar hides and returns
 
   // back to the demo from the scene select (in the tools popover)
   await page.click('#tools-btn');
+  page.once('dialog', (d) => void d.accept()); // leaving a running game asks first
   await page.selectOption('#mode', 'demo');
   await expect.poll(() => page.evaluate(() => window.__d2?.mode), { timeout: 20_000 }).toBe('demo');
   expect(await page.evaluate(() => document.body.classList.contains('playing'))).toBe(false);
@@ -483,4 +485,36 @@ test('optional archives: without sound and video archives the game still runs', 
   expect(await shownFrames(page)).toBeGreaterThan(before + 5);
   await shot(page, 'res-title-no-sound-archives.png');
   expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
+});
+
+test('leaving a running game asks first: test scene and closing the tab', async ({ page }) => {
+  const errors = watch(page);
+  await openAndPlay(page, /^(d2data|d2exp|d2char|patch_d2)\.mpq$/i);
+  const messages: string[] = [];
+  // cancel: the game keeps running and the scene select stays on Game
+  page.once('dialog', (d) => {
+    messages.push(d.message());
+    void d.dismiss();
+  });
+  await page.evaluate(() => document.getElementById('demo-btn')!.click());
+  expect(messages[0]).toMatch(/Progress since your character was last saved will be lost/);
+  expect(await page.evaluate(() => window.__d2?.mode)).toBe('full');
+  expect(await page.locator('#mode').inputValue()).toBe('play');
+
+  // the tab: the browser's own prompt (needs a user gesture on the page first)
+  await click(page, 400, 300);
+  const unload = new Promise<string>((resolve) => page.once('dialog', (d) => {
+    resolve(d.type());
+    void d.dismiss();
+  }));
+  await page.close({ runBeforeUnload: true });
+  expect(await unload).toBe('beforeunload');
+  expect(errors.filter((e) => !/favicon|404/i.test(e))).toEqual([]);
+});
+
+test('leaving a running game: accepting the prompt goes to the test scene', async ({ page }) => {
+  await openAndPlay(page, /^(d2data|d2exp|d2char|patch_d2)\.mpq$/i);
+  page.once('dialog', (d) => void d.accept());
+  await page.evaluate(() => document.getElementById('demo-btn')!.click());
+  await expect.poll(() => page.evaluate(() => window.__d2?.mode)).toBe('demo');
 });

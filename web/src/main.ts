@@ -475,6 +475,19 @@ async function main(): Promise<void> {
   const palettes = new Map<string, Palette>();
 
   const failCard = $('game-failed');
+  // leaving a running game quits it: the character is saved on quit, but what happened since the last save is gone
+  const LEAVE_GAME = 'Leave the game?\n\nThe game will be closed. Progress since your character was last saved will be lost.';
+  /** shown and not crashed or quit (before the first frame or after a crash there is nothing to keep) */
+  const gameInProgress = (): boolean => !!full && full.stats.shown > 0 && full.stats.exited === null && failCard.hidden === true;
+  /** true when there is no game to lose or the player agreed; otherwise the scene select goes back to Game */
+  const confirmLeaveGame = (): boolean => {
+    if (!gameInProgress() || confirm(LEAVE_GAME)) return true;
+    panel.setMode('play');
+    return false;
+  };
+  window.addEventListener('beforeunload', (e) => {
+    if (gameInProgress()) e.preventDefault(); // the browser shows its own "Leave site?" prompt (no custom text)
+  });
   const showFailed = (reason: string): void => {
     $('game-failed-reason').textContent = reason;
     failCard.hidden = false;
@@ -518,6 +531,7 @@ async function main(): Promise<void> {
       palettes.set(req.palette, pal);
     }
     const dc6 = await core.loadDc6(req.path);
+    if (!confirmLeaveGame()) return;
     await stopForScene();
     const viewer = switchScene(
       () => renderer.resetAtlas(),
@@ -546,6 +560,7 @@ async function main(): Promise<void> {
     panel.setStatus(`Loading ${path}...`);
     const data = await loadMapData(core, path);
     const pal = actPalette;
+    if (!confirmLeaveGame()) return;
     await stopForScene();
     const map = switchScene(
       () => renderer.resetAtlas(),
@@ -573,6 +588,7 @@ async function main(): Promise<void> {
     panel.setStatus(info, map.sprites.length === 0 || st.atlasFull > 0);
   };
   impl.onDemo = () => {
+    if (!confirmLeaveGame()) return;
     const wasFull = !!full;
     hideFailed();
     void stopFull();
@@ -593,6 +609,7 @@ async function main(): Promise<void> {
   };
   const play = async (): Promise<void> => {
     if (full) {
+      if (!confirmLeaveGame()) return;
       hideFailed();
       const stopping = stopFull();
       showDemo();
