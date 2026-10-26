@@ -45,6 +45,11 @@ export function bindConsent(): ConsentUi {
   /** A choice was made during play: the keyboard goes back to the game (the hidden form already dropped focus). */
   const release = (): void => {
     if (document.body.classList.contains('playing')) document.getElementById('view')?.focus({ preventScroll: true });
+    else if (root.contains(document.activeElement) || document.activeElement === document.body) {
+      // outside play: keep keyboard users near where they were (the Tools entry when its popover is open)
+      const target = edit && edit.offsetWidth > 0 ? edit : document.getElementById('view');
+      target?.focus({ preventScroll: true });
+    }
   };
 
   const choose = (c: Consent): void => {
