@@ -4,6 +4,8 @@
 interface ImportMetaEnv {
   readonly VITE_SOURCE_URL?: string;
   readonly VITE_COMMIT?: string;
+  /** where visits are sent; default /api/visit on the same origin (the GitHub Pages build points at the Worker) */
+  readonly VITE_VISIT_URL?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

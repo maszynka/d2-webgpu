@@ -5,6 +5,8 @@ Diablo II: Lord of Destruction running in a browser tab: the open-source engine 
 [d2decomped](https://github.com/psi29a/d2decomped) compiled to WebAssembly, with a WebGPU presentation layer
 (upscaling, lighting for the asset viewer, a side-by-side upscaler comparison).
 
+**Play:** <https://maszynka.github.io/d2-webgpu/> (also at <https://d2-webgpu.cloudflare-fe3.workers.dev/>).
+
 **No Blizzard data is included, hosted or downloaded.** You point the page at your own Diablo II: LoD installation
 (the `.mpq` archives). The files are read locally in your browser and never leave your machine.
 

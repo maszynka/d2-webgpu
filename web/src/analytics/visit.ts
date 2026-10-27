@@ -5,6 +5,8 @@
 // Analytics Engine. No cookies, no IP, no raw User-Agent, no per-visitor id; the choice itself stays in localStorage.
 
 export const VISIT_PATH = '/api/visit';
+/** pages served from the Worker's own origin, plus these, may send visits (the GitHub Pages copy posts to the Worker) */
+export const VISIT_ORIGINS = ['https://maszynka.github.io'];
 
 export type WebGpuStatus = 'none' | 'failed' | 'hardware' | 'software';
 
@@ -134,7 +136,9 @@ function flush(): void {
     const report: VisitReport = c.tech
       ? { consent: c, ...tech }
       : { consent: c, webgpu: 'unknown', vendor: '', architecture: '', features: [], jspi: false };
-    navigator.sendBeacon(VISIT_PATH, new Blob([JSON.stringify(report)], { type: 'application/json' }));
+    // text/plain: a beacon to another origin (GitHub Pages -> the Worker) may only use a CORS-safelisted type
+    const url = import.meta.env.VITE_VISIT_URL || VISIT_PATH;
+    navigator.sendBeacon(url, new Blob([JSON.stringify(report)], { type: 'text/plain' }));
   } catch {
     // counting is best effort
   }

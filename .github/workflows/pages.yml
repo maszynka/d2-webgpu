@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# GitHub Pages copy of the site at https://<owner>.github.io/<repo>/: d2core.wasm + d2full.wasm (Emscripten) and the
+# web app built for that sub-path. No game data. Visits go to the Cloudflare Worker (VITE_VISIT_URL), which also serves
+# /admin; the source link points at this commit on GitHub (GPL-3.0 §6d).
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.13
+          actions-cache-folder: emsdk-cache
+      - name: Build d2core.wasm
+        run: wasm/build.sh
+      - name: Build d2full.wasm
+        run: bash wasm/full/build.sh
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Build for the Pages sub-path
+        working-directory: web
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_SOURCE_URL: https://github.com/${{ github.repository }}/tree/${{ github.sha }}
+          VITE_COMMIT: ${{ github.sha }}
+          VITE_VISIT_URL: https://d2-webgpu.cloudflare-fe3.workers.dev/api/visit
+        run: pnpm build
+      - name: Check the build carries both wasm modules and the sub-path
+        working-directory: web
+        run: |
+          test -f dist/d2core.wasm && test -f dist/d2full.wasm
+          grep -q "src=\"/${{ github.event.repository.name }}/assets/" dist/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

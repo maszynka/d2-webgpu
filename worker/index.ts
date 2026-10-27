@@ -4,7 +4,7 @@
 // POST /api/visit counts a page load (web/src/analytics/visit.ts) into Workers Analytics Engine; /admin shows the counts
 // (worker/admin.ts, its own password).
 
-import { VISIT_PATH, parseReport, parseUserAgent } from '../web/src/analytics/visit';
+import { VISIT_ORIGINS, VISIT_PATH, parseReport, parseUserAgent } from '../web/src/analytics/visit';
 import { ADMIN_HTML, adminEnabled, adminStats, type AdminEnv } from './admin';
 
 interface AnalyticsDataset {
@@ -45,9 +45,20 @@ async function boundedText(request: Request, max: number): Promise<string | null
 }
 
 async function countVisit(request: Request, env: Env): Promise<Response> {
+  // a page on another allowed origin (GitHub Pages) posts here too; any other origin is refused
+  const origin = request.headers.get('Origin');
+  const own = new URL(request.url).origin;
+  const allowed = origin === null || origin === own || VISIT_ORIGINS.includes(origin);
+  const cors: Record<string, string> = allowed && origin && origin !== own
+    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Expose-Headers': 'X-Visit', Vary: 'Origin' }
+    : {};
   // X-Visit says what happened (counted / why not); it carries nothing about the visitor
-  const done = (outcome: string): Response => new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', 'X-Visit': outcome } });
+  const done = (outcome: string): Response => new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', 'X-Visit': outcome, ...cors } });
+  if (request.method === 'OPTIONS' && allowed) {
+    return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' } });
+  }
   if (request.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } });
+  if (!allowed) return done('foreign-origin');
   if (!env.VISITS) return done('off');
   if (request.headers.get('Sec-GPC') === '1' || request.headers.get('DNT') === '1') return done('opted-out');
   if (Number(request.headers.get('Content-Length') ?? 0) > MAX_VISIT_BODY) return done('too-large');
