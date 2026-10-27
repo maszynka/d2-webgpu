@@ -50,7 +50,7 @@ async function countVisit(request: Request, env: Env): Promise<Response> {
   const own = new URL(request.url).origin;
   const allowed = origin === null || origin === own || VISIT_ORIGINS.includes(origin);
   const cors: Record<string, string> = allowed && origin && origin !== own
-    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Expose-Headers': 'X-Visit', Vary: 'Origin' }
+    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Expose-Headers': 'X-Visit', Vary: 'Origin' }
     : {};
   // X-Visit says what happened (counted / why not); it carries nothing about the visitor
   const done = (outcome: string): Response => new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', 'X-Visit': outcome, ...cors } });

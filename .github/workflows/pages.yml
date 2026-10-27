@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -32,6 +30,8 @@ jobs:
           actions-cache-folder: emsdk-cache
       - name: Build d2core.wasm
         run: wasm/build.sh
+      - name: d2decomped patches apply (fails fast on a reject or fuzz)
+        run: bash wasm/full/apply-patches.sh --check
       - name: Build d2full.wasm
         run: bash wasm/full/build.sh
       - uses: pnpm/action-setup@v4
@@ -56,7 +56,7 @@ jobs:
       - name: Check the build carries both wasm modules and the sub-path
         working-directory: web
         run: |
-          test -f dist/d2core.wasm && test -f dist/d2full.wasm
+          test -f dist/d2core.wasm && test -f dist/d2core.js && test -f dist/d2full.wasm && test -f dist/d2full.js
           grep -q "src=\"/${{ github.event.repository.name }}/assets/" dist/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
@@ -66,6 +66,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
