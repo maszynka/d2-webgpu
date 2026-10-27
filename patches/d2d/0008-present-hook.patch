@@ -3,7 +3,7 @@ d2full 0008: the two SDL_UpdateTexture/RenderTexture/RenderPresent sites (main.c
 
 --- a/apps/d2d/main.cpp
 +++ b/apps/d2d/main.cpp
-@@ -488,10 +488,14 @@
+@@ -494,10 +494,14 @@
          SDL_Event event;
          while (SDL_PollEvent(&event)) if (event.type == SDL_EVENT_QUIT) quit = true;
          if (boot_title) render_title(framebuffer, *scene, boot_title->buttons, std::uint32_t(SDL_GetTicks()));
@@ -17,8 +17,8 @@ d2full 0008: the two SDL_UpdateTexture/RenderTexture/RenderPresent sites (main.c
 +#endif
          crash_frame.update(framebuffer);
          if (++frame_count == 1) d2d::log::info("First frame presented at {} ms after launch.", d2d::log::ms());
-         SDL_Delay(10);
-@@ -1414,12 +1418,19 @@
+ #ifdef D2WEB
+@@ -1415,12 +1419,19 @@
          if (!(wflags & SDL_WINDOW_MINIMIZED)) {
              current_phase.store(std::uint32_t(MainPhase::Upload),
                                  std::memory_order_relaxed);
