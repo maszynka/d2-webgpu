@@ -19,18 +19,43 @@ interface Env extends AdminEnv {
 
 const MAX_VISIT_BODY = 1024;
 
+/** the body as text, or null when it is longer than `max` bytes (stops reading there; Content-Length is often absent on HTTP/2 and 3) */
+async function boundedText(request: Request, max: number): Promise<string | null> {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 async function countVisit(request: Request, env: Env): Promise<Response> {
-  const done = new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  // X-Visit says what happened (counted / why not); it carries nothing about the visitor
+  const done = (outcome: string): Response => new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store', 'X-Visit': outcome } });
   if (request.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST' } });
-  // not counted: opted-out visitors, oversized bodies
-  if (!env.VISITS) return done;
-  if (request.headers.get('Sec-GPC') === '1' || request.headers.get('DNT') === '1') return done;
-  if (!(Number(request.headers.get('Content-Length') ?? NaN) <= MAX_VISIT_BODY)) return done; // missing or malformed: skip
+  if (!env.VISITS) return done('off');
+  if (request.headers.get('Sec-GPC') === '1' || request.headers.get('DNT') === '1') return done('opted-out');
+  if (Number(request.headers.get('Content-Length') ?? 0) > MAX_VISIT_BODY) return done('too-large');
   try {
-    const text = await request.text();
-    if (text.length > MAX_VISIT_BODY) return done;
+    const text = await boundedText(request, MAX_VISIT_BODY);
+    if (text === null) return done('too-large');
     const report = parseReport(JSON.parse(text));
-    if (!report) return done;
+    if (!report) return done('no-consent');
     // without tech consent no browser / OS either; without country consent '--'
     const ua = report.consent.tech ? parseUserAgent(request.headers.get('User-Agent') ?? '') : { browser: '', browserMajor: '', os: '' };
     const country = report.consent.country ? ((request as Request & { cf?: { country?: string } }).cf?.country ?? 'XX') : '--';
@@ -40,10 +65,10 @@ async function countVisit(request: Request, env: Env): Promise<Response> {
       blobs: [ua.browser, ua.browserMajor, ua.os, report.webgpu, report.vendor, report.architecture, report.features.join(','), report.consent.tech ? (report.jspi ? 'jspi' : 'no-jspi') : ''],
       doubles: [1],
     });
+    return done('counted');
   } catch {
-    // aborted upload, bad JSON: not counted
+    return done('bad-request'); // aborted upload, bad JSON
   }
-  return done;
 }
 
 const encoder = new TextEncoder();
