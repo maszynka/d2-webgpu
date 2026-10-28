@@ -27,6 +27,7 @@ import { bindDivider } from './ui/divider';
 import { bindUpscaleStrip } from './ui/display';
 import { bindWelcome } from './ui/welcome';
 import { bindConsent } from './ui/consent';
+import { serverDataUrl } from './assets/server-data';
 import { bindLoupe } from './ui/loupe';
 import { bindHud } from './ui/hud';
 import { FullGame, type FullGameStats } from './full/fullgame';
@@ -168,8 +169,12 @@ async function main(): Promise<void> {
     syncWelcome();
   };
   syncWelcome();
-  // the analytics opt-in follows the cards (under them, or a strip over the stage once they are gone) until chosen
-  bindConsent();
+  // the analytics opt-in follows the cards (under them, or a strip over the stage once they are gone) until chosen;
+  // the owner-only deploy counts nothing (worker/data.ts), so it has no opt-in
+  if (serverDataUrl()) {
+    $('consent').hidden = true;
+    $('privacy-tools').hidden = true;
+  } else bindConsent();
   /** the first usable control of the bar itself (not a popover): where Ctrl+Shift+B puts the focus */
   const firstBarControl = (): HTMLElement | null => {
     for (const c of $('bar').querySelectorAll<HTMLElement>('button, select, input'))
