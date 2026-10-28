@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // web/dist (app + wasm + bundled source archive) served by worker/index.ts (public; optional password gate when the
 // SITE_PASSWORD secret is set). No game data.
+// env "private" (d2-webgpu-private, `wrangler deploy --env private`): the same app for the owner only, behind
+// SITE_PASSWORD, with their own game archives from an R2 bucket under /data/ (worker/data.ts). No visit counting.
 {
   "name": "d2-webgpu",
   "main": "worker/index.ts",
@@ -14,5 +16,10 @@
     "run_worker_first": true
   },
   // cookieless visit counts (worker/index.ts, POST /api/visit)
-  "analytics_engine_datasets": [{ "binding": "VISITS", "dataset": "d2_webgpu_visits" }]
+  "analytics_engine_datasets": [{ "binding": "VISITS", "dataset": "d2_webgpu_visits" }],
+  "env": {
+    "private": {
+      "r2_buckets": [{ "binding": "DATA", "bucket_name": "d2-webgpu-private-data" }]
+    }
+  }
 }

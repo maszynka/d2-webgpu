@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Build wasm + web, bundle the Corresponding Source (GPL-3.0 §6d) next to the
-# app, and deploy web/dist as a Cloudflare Workers static-assets site. Usage: scripts/deploy.sh [branch]
+# app, and deploy web/dist as a Cloudflare Workers static-assets site: the public Worker and the owner-only one
+# (wrangler env "private": password + the game archives from R2). Usage: scripts/deploy.sh [branch]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 branch="${1:-main}"
@@ -22,3 +23,4 @@ mkdir -p web/dist/source
 tar -czf "web/dist/source/${archive}" -C "$tmp" "d2-webgpu-${sha}"
 
 npx -y wrangler@4 deploy --message "d2-webgpu ${sha} (${branch})"
+npx -y wrangler@4 deploy --env private --message "d2-webgpu ${sha} (${branch}, private)"

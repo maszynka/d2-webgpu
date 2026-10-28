@@ -2,10 +2,13 @@
 // Serves the static assets (app, wasm, the source archive). Optional HTTP Basic auth gate: when the SITE_PASSWORD
 // secret is set, every request needs it (e.g. a private staging deploy); without it the site is public.
 // POST /api/visit counts a page load (web/src/analytics/visit.ts) into Workers Analytics Engine; /admin shows the counts
-// (worker/admin.ts, its own password).
+// (worker/admin.ts, its own password). With the DATA bucket (wrangler env "private") it also serves the owner's game
+// archives under /data/ (worker/data.ts); that deploy refuses to run without SITE_PASSWORD.
 
 import { VISIT_ORIGINS, VISIT_PATH, parseReport, parseUserAgent } from '../web/src/analytics/visit';
 import { ADMIN_HTML, adminEnabled, adminStats, type AdminEnv } from './admin';
+import { announceData, serveData, type R2BucketLike } from './data';
+import { DATA_PATH } from '../web/src/assets/server-data';
 
 interface AnalyticsDataset {
   writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
@@ -15,6 +18,8 @@ interface Env extends AdminEnv {
   ASSETS: { fetch(request: Request): Promise<Response> };
   SITE_PASSWORD?: string;
   VISITS?: AnalyticsDataset;
+  /** private deploy only: the game archives */
+  DATA?: R2BucketLike;
 }
 
 const MAX_VISIT_BODY = 1024;
@@ -128,6 +133,8 @@ async function admin(request: Request, env: Env, url: URL): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // fail closed: the game data is never served without the password
+    if (env.DATA && !env.SITE_PASSWORD) return new Response('Not configured', { status: 503, headers: { 'Cache-Control': 'no-store' } });
     // only when configured; otherwise /admin is an ordinary path (behind the site password on gated deploys)
     if (adminEnabled(env) && (url.pathname === '/admin' || url.pathname.startsWith('/admin/'))) return admin(request, env, url);
     // gated deploys aren't counted and keep the endpoint behind the password like everything else
@@ -146,10 +153,11 @@ export default {
         headers: { 'WWW-Authenticate': 'Basic realm="d2-webgpu", charset="UTF-8"', 'Cache-Control': 'no-store' },
       });
     }
+    if (env.DATA && url.pathname.startsWith(DATA_PATH)) return serveData(request, env.DATA, url.pathname);
     const response = await env.ASSETS.fetch(request);
     const out = new Response(response.body, response);
     out.headers.set('Cache-Control', 'private, no-store');
     out.headers.set('X-Robots-Tag', 'noindex, nofollow');
-    return out;
+    return env.DATA ? announceData(out) : out;
   },
 };

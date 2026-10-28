@@ -15,6 +15,7 @@ import {
   type FsDirHandle,
   type HandleStore,
 } from '../assets/picker';
+import { serverDataUrl, syncServerData } from '../assets/server-data';
 import { filesFromDrop, hasFiles } from './drop';
 
 export interface ViewRequest {
@@ -399,8 +400,35 @@ export class Panel {
     });
   }
 
-  /** On load: reopen the remembered folder (a click is needed when the browser dropped the permission). It never autoplays. */
+  /** Private deploy: copy the server's archives into this browser (first visit or after a change), then open them. */
+  private async useServerData(base: string): Promise<void> {
+    this.setState('loading');
+    this.setProgress(true);
+    this.setStatus('Checking the game files on the server...');
+    let files: File[];
+    try {
+      const dir = await syncServerData(base, (p) => {
+        if (!p.file || p.total === 0) return;
+        this.setProgress(p.done / p.total);
+        this.setStatus(`Downloading game files to this browser (once): ${p.file}, ${Math.round(p.done / 1048576)} / ${Math.round(p.total / 1048576)} MB`);
+      });
+      files = await collectMpqFiles(dir as unknown as FsDirHandle, 0);
+    } catch (e) {
+      this.setProgress(null);
+      this.setStatus(`Server game files: ${e instanceof Error ? e.message : String(e)}`, true);
+      this.setState('nofiles');
+      return;
+    }
+    await this.load(files, 'Server game files', false);
+  }
+
+  /**
+   * On load: on the private deploy the server's archives, otherwise the remembered folder (a click is needed when the
+   * browser dropped the permission). It never autoplays.
+   */
   async restore(): Promise<void> {
+    const base = serverDataUrl();
+    if (base) return this.useServerData(base);
     if (!supportsDirectoryPicker()) return;
     const r = await restoreHandle(this.store);
     if (r.state === 'granted') await this.useHandle(r.handle, false);
