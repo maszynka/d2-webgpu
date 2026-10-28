@@ -19,6 +19,7 @@
   "analytics_engine_datasets": [{ "binding": "VISITS", "dataset": "d2_webgpu_visits" }],
   "env": {
     "private": {
+      "analytics_engine_datasets": [],
       "r2_buckets": [{ "binding": "DATA", "bucket_name": "d2-webgpu-private-data" }]
     }
   }

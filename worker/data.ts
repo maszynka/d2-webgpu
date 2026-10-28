@@ -37,14 +37,17 @@ export async function listData(bucket: R2BucketLike): Promise<DataEntry[]> {
 export async function serveData(request: Request, bucket: R2BucketLike, pathname: string): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 405, headers: { ...HEADERS, Allow: 'GET, HEAD' } });
   const name = pathname.slice(DATA_PATH.length);
-  if (name === 'manifest.json') return Response.json({ files: await listData(bucket) }, { headers: HEADERS });
-  if (!MPQ_KEY.test(name)) return new Response('Not found', { status: 404, headers: HEADERS });
   const head = request.method === 'HEAD';
+  if (name === 'manifest.json') {
+    if (head) return new Response(null, { headers: { ...HEADERS, 'Content-Type': 'application/json' } });
+    return Response.json({ files: await listData(bucket) }, { headers: HEADERS });
+  }
+  if (!MPQ_KEY.test(name)) return new Response('Not found', { status: 404, headers: HEADERS });
   const obj = head ? await bucket.head(name) : await bucket.get(name);
   if (!obj) return new Response('Not found', { status: 404, headers: HEADERS });
   const headers = { ...HEADERS, 'Content-Type': 'application/octet-stream', ETag: obj.httpEtag };
   if (head) return new Response(null, { headers: { ...headers, 'Content-Length': String(obj.size) } });
-  return new Response((obj as R2ObjectBodyLike).body, { headers });
+  return new Response((obj as R2ObjectBodyLike).body, { headers }); // R2 bodies have a known length: Content-Length is set
 }
 
 interface HtmlRewriterLike {
@@ -55,7 +58,8 @@ declare const HTMLRewriter: { new (): HtmlRewriterLike };
 
 /** tells the app (a <meta> in the page head) that its archives come from DATA_PATH */
 export function announceData(response: Response): Response {
-  if (!(response.headers.get('Content-Type') ?? '').includes('text/html')) return response;
+  // a 304 or another body-less answer can't be rewritten (and needs nothing)
+  if (!response.body || response.status === 304 || !(response.headers.get('Content-Type') ?? '').includes('text/html')) return response;
   return new HTMLRewriter()
     .on('head', { element: (e) => e.append(`<meta name="${DATA_META}" content="${DATA_PATH}" />`, { html: true }) })
     .transform(response);

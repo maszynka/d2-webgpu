@@ -51,6 +51,7 @@ describe('serveData', () => {
     expect(r.status).toBe(200);
     expect(r.headers.get('Content-Length')).toBe('5');
     expect(await r.text()).toBe('');
+    expect(await (await serveData(get('/data/manifest.json', { method: 'HEAD' }), bucket(files), '/data/manifest.json')).text()).toBe('');
   });
 
   it('refuses other keys and methods', async () => {
