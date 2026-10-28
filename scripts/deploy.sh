@@ -24,7 +24,8 @@ tar -czf "web/dist/source/${archive}" -C "$tmp" "d2-webgpu-${sha}"
 
 npx -y wrangler@4 deploy --message "d2-webgpu ${sha} (${branch})"
 # the owner-only copy; it would answer 503 without its password, so it waits until the secret exists
-if npx -y wrangler@4 secret list --env private 2>/dev/null | grep -q '"SITE_PASSWORD"'; then
+secrets="$(npx -y wrangler@4 secret list --env private 2>/dev/null || true)"
+if grep -q '"SITE_PASSWORD"' <<<"$secrets"; then
   npx -y wrangler@4 deploy --env private --message "d2-webgpu ${sha} (${branch}, private)"
 else
   echo "private deploy skipped: set it up with: npx wrangler secret put SITE_PASSWORD --env private" >&2
