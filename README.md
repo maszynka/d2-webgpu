@@ -68,6 +68,19 @@ cd web && pnpm e2e                                  # Playwright; D2_MPQ_DIR=<ga
 `scripts/deploy.sh` builds everything and deploys to Cloudflare Workers, bundling the Corresponding Source as a tarball
 at `/source/` on the site.
 
+A private copy for your own game files (wrangler env `private`): the same app as a second Worker behind a password,
+with your MPQ archives in a private R2 bucket. The page copies them into the browser's private storage (OPFS) on the
+first visit and opens them from there afterwards, so the game starts without picking a folder. Set it up once:
+
+```sh
+npx wrangler r2 bucket create d2-webgpu-private-data
+npx wrangler r2 object put d2-webgpu-private-data/d2data.mpq --file <game folder>/d2data.mpq --remote  # each archive; over 300 MiB needs a multipart upload
+npx wrangler secret put SITE_PASSWORD --env private
+```
+
+`scripts/deploy.sh` then deploys it too. Without `SITE_PASSWORD` it answers 503 and serves nothing. Never put game
+files in a public bucket or in `web/public`.
+
 ## Status and limits
 
 Acts I to IV, single player, as far as the pinned d2decomped commit goes (Act V is not built upstream yet). Known gaps: no Bink cinematics, no multiplayer or
