@@ -69,9 +69,9 @@ describe('syncServerData', () => {
   it('downloads what changed, keeps the rest and drops what the server removed', async () => {
     const dir = new FakeDir();
     vi.stubGlobal('navigator', { storage: { getDirectory: async () => dir, persist: async () => true, estimate: async () => ({ quota: 1e9, usage: 0 }) } });
-    const s1 = server({ 'd2data.mpq': { body: 'data', etag: '1' }, 'old.mpq': { body: 'o', etag: '1' } });
+    const s1 = server({ 'd2data.mpq': { body: 'data', etag: '1' }, 'd2sfx.mpq': { body: 'o', etag: '1' } });
     await syncServerData('/data/', () => undefined, s1.fetch);
-    expect(s1.got).toEqual(['manifest.json', 'd2data.mpq', 'old.mpq']);
+    expect(s1.got).toEqual(['manifest.json', 'd2data.mpq', 'd2sfx.mpq']);
     expect(dir.files.get('d2data.mpq')?.data).toBe('data');
 
     const s2 = server({ 'd2data.mpq': { body: 'data', etag: '1' }, 'd2exp.mpq': { body: 'exp', etag: '1' } });
@@ -85,6 +85,28 @@ describe('syncServerData', () => {
     await syncServerData('/data/', () => undefined, s3.fetch);
     expect(s3.got).toEqual(['manifest.json', 'd2data.mpq']);
     expect(dir.files.get('d2data.mpq')?.data).toBe('DATA');
+  });
+
+  it('keeps the old copy when a download breaks off, and plays the saved copy when the server is unreachable', async () => {
+    const dir = new FakeDir();
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => dir } });
+    await syncServerData('/data/', () => undefined, server({ 'd2data.mpq': { body: 'data', etag: '1' } }).fetch);
+    const broken = (async (url: string) => {
+      if (url.endsWith('manifest.json')) return Response.json({ files: [{ name: 'd2data.mpq', size: 4, etag: '2' }] });
+      const body = new ReadableStream({ pull: (c) => c.error(new Error('connection reset')) });
+      return new Response(body);
+    }) as unknown as typeof fetch;
+    await expect(syncServerData('/data/', () => undefined, broken)).rejects.toThrow(/connection reset/);
+    expect(dir.files.get('d2data.mpq')?.data).toBe('data');
+    expect(JSON.parse(dir.files.get('etags.json')!.data)).toEqual({ 'd2data.mpq': '1' });
+
+    const seen: boolean[] = [];
+    const down = (async () => Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch;
+    expect(await syncServerData('/data/', (p) => seen.push(p.offline === true), down)).toBe(dir);
+    expect(seen).toEqual([true]);
+    const empty = new FakeDir();
+    vi.stubGlobal('navigator', { storage: { getDirectory: async () => empty } });
+    await expect(syncServerData('/data/', () => undefined, down)).rejects.toThrow(/Failed to fetch/);
   });
 
   it('stops before downloading when the browser has too little room', async () => {

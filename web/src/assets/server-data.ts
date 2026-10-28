@@ -3,9 +3,12 @@
 // once into this browser's origin-private storage (OPFS, folder "d2-data") and opened from there on every visit; a
 // file is downloaded again only when the server's copy changes. The public site has no <meta name="d2-data">.
 
+import { MPQ_ORDER } from './mpq';
+
 export const DATA_META = 'd2-data';
 export const DATA_PATH = '/data/';
-export const MPQ_KEY = /^[A-Za-z0-9_-]+\.mpq$/i;
+/** only the archives the game knows (picker.ts collectMpqFiles takes the same names) */
+export const MPQ_KEY = new RegExp(`^(${MPQ_ORDER.join('|')})\\.mpq$`, 'i');
 const DIR = 'd2-data';
 const ETAGS = 'etags.json';
 
@@ -20,6 +23,8 @@ export interface SyncProgress {
   done: number;
   total: number;
   file: string;
+  /** the server could not be reached; the copy from an earlier visit is used */
+  offline?: boolean;
 }
 
 /** the data URL the private deploy put in the page, or null (public site) */
@@ -62,11 +67,29 @@ const mb = (n: number): string => (n / 1048576).toFixed(0);
  */
 export async function syncServerData(base: string, onProgress: (p: SyncProgress) => void, fetchFn: typeof fetch = fetch): Promise<FileSystemDirectoryHandle> {
   if (!navigator.storage?.getDirectory) throw new Error('This browser has no private file storage (OPFS); open the game folder instead.');
-  const res = await fetchFn(`${base}manifest.json`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`The server's file list failed (${res.status}).`);
-  const remote = ((await res.json()) as { files?: DataEntry[] }).files ?? [];
-  if (remote.length === 0) throw new Error('The server has no game files.');
   const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(DIR, { create: true });
+  const sync = async (): Promise<FileSystemDirectoryHandle> => {
+    let remote: DataEntry[];
+    try {
+      const res = await fetchFn(`${base}manifest.json`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`The server's file list failed (${res.status}).`);
+      remote = ((await res.json()) as { files?: DataEntry[] }).files ?? [];
+    } catch (e) {
+      // offline or a server hiccup: a copy saved on an earlier visit still plays
+      if ((await localSizes(dir)).size > 0) {
+        onProgress({ done: 0, total: 0, file: '', offline: true });
+        return dir;
+      }
+      throw e;
+    }
+    if (remote.length === 0) throw new Error('The server has no game files.');
+    return download(dir, base, remote, onProgress, fetchFn);
+  };
+  // one sync at a time across tabs: another tab replacing a file under a running game breaks its reads
+  return navigator.locks ? navigator.locks.request('d2-data-sync', sync) : sync();
+}
+
+async function download(dir: FileSystemDirectoryHandle, base: string, remote: DataEntry[], onProgress: (p: SyncProgress) => void, fetchFn: typeof fetch): Promise<FileSystemDirectoryHandle> {
   const etags = await readEtags(dir);
   const local = await localSizes(dir);
   const gone = [...local.keys()].filter((name) => !remote.some((e) => e.name === name));
@@ -78,6 +101,7 @@ export async function syncServerData(base: string, onProgress: (p: SyncProgress)
   const todo = toDownload(remote, local, etags);
   const total = todo.reduce((a, e) => a + e.size, 0);
   if (total > 0) {
+    if (typeof FileSystemFileHandle !== 'undefined' && !('createWritable' in FileSystemFileHandle.prototype)) throw new Error('This browser cannot write to its private file storage; open the game folder instead.');
     void navigator.storage.persist?.().catch(() => false); // ask the browser not to evict ~1 GB under storage pressure
     const est = await navigator.storage.estimate?.().catch(() => null);
     const free = est?.quota !== undefined && est.usage !== undefined ? est.quota - est.usage : Infinity;
@@ -89,7 +113,6 @@ export async function syncServerData(base: string, onProgress: (p: SyncProgress)
     const r = await fetchFn(`${base}${encodeURIComponent(e.name)}`, { cache: 'no-store' });
     if (!r.ok || !r.body) throw new Error(`Downloading ${e.name} failed (${r.status}).`);
     const fh = await dir.getFileHandle(e.name, { create: true });
-    if (!fh.createWritable) throw new Error('This browser cannot write to its private file storage; open the game folder instead.');
     const w = await fh.createWritable();
     const reader = r.body.getReader();
     try {
@@ -111,7 +134,7 @@ export async function syncServerData(base: string, onProgress: (p: SyncProgress)
     }
     const size = (await fh.getFile()).size;
     if (size !== e.size) throw new Error(`${e.name}: got ${size} bytes, expected ${e.size}.`);
-    etags[e.name] = e.etag;
+    etags[e.name] = r.headers.get('ETag') ?? e.etag; // what was actually downloaded, should the file change meanwhile
     await writeEtags(dir, etags);
   }
   onProgress({ done: total, total, file: '' });

@@ -46,7 +46,16 @@ describe('serveData', () => {
     expect(r.headers.get('ETag')).toBe('"d2data.mpq-1"');
   });
 
+  it('answers HEAD with the size and no body', async () => {
+    const r = await serveData(get('/data/d2data.mpq', { method: 'HEAD' }), bucket(files), '/data/d2data.mpq');
+    expect(r.status).toBe(200);
+    expect(r.headers.get('Content-Length')).toBe('5');
+    expect(await r.text()).toBe('');
+  });
+
   it('refuses other keys and methods', async () => {
+    expect((await serveData(get('/data/x.mpq'), bucket({ 'x.mpq': 'stray' }), '/data/x.mpq')).status).toBe(404);
+    expect((await serveData(get('/data/%2e%2e%2fd2data.mpq'), bucket(files), '/data/%2e%2e%2fd2data.mpq')).status).toBe(404);
     expect((await serveData(get('/data/notes.txt'), bucket(files), '/data/notes.txt')).status).toBe(404);
     expect((await serveData(get('/data/missing.mpq'), bucket(files), '/data/missing.mpq')).status).toBe(404);
     expect((await serveData(get('/data/a/b.mpq'), bucket(files), '/data/a/b.mpq')).status).toBe(404);
@@ -61,6 +70,7 @@ describe('private deploy gate', () => {
   it('fails closed without the site password', async () => {
     const r = await worker.fetch(get('/data/d2data.mpq'), { ASSETS: assets, DATA: bucket(files) });
     expect(r.status).toBe(503);
+    expect((await worker.fetch(get('/data/d2data.mpq', { method: 'HEAD' }), { ASSETS: assets, DATA: bucket(files) })).status).toBe(503);
     expect((await worker.fetch(get('/'), { ASSETS: assets, DATA: bucket(files) })).status).toBe(503);
   });
 
@@ -68,6 +78,7 @@ describe('private deploy gate', () => {
     const env = { ASSETS: assets, DATA: bucket(files), SITE_PASSWORD: 'secret' };
     expect((await worker.fetch(get('/data/d2data.mpq'), env)).status).toBe(401);
     expect((await worker.fetch(get('/data/d2data.mpq', auth('wrong')), env)).status).toBe(401);
+    expect((await worker.fetch(get('/data/d2data.mpq', { method: 'HEAD' }), env)).status).toBe(401);
     const r = await worker.fetch(get('/data/d2data.mpq', auth('secret')), env);
     expect(await r.text()).toBe('data!');
   });

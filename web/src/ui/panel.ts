@@ -406,8 +406,10 @@ export class Panel {
     this.setProgress(true);
     this.setStatus('Checking the game files on the server...');
     let files: File[];
+    let offline = false;
     try {
       const dir = await syncServerData(base, (p) => {
+        offline ||= p.offline === true;
         if (!p.file || p.total === 0) return;
         this.setProgress(p.done / p.total);
         this.setStatus(`Downloading game files to this browser (once): ${p.file}, ${Math.round(p.done / 1048576)} / ${Math.round(p.total / 1048576)} MB`);
@@ -419,7 +421,7 @@ export class Panel {
       this.setState('nofiles');
       return;
     }
-    await this.load(files, 'Server game files', false);
+    await this.load(files, offline ? 'Saved game files (server unreachable)' : 'Server game files', false);
   }
 
   /**
