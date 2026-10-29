@@ -806,7 +806,7 @@ async function main(): Promise<void> {
         /* reported below */
       }
       ta.remove();
-      copyBtn.focus();
+      copyBtn.focus({ preventScroll: true });
       return ok;
     };
     if (legacy()) done(true);
