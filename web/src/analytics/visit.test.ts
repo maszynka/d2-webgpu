@@ -59,6 +59,6 @@ describe('jspiSupported', () => {
     expect(jspiSupported({})).toBe(false);
     expect(jspiSupported({ Suspending: undefined, promising: () => 0 })).toBe(false);
     expect(jspiSupported({ Suspending: function () {} })).toBe(false);
-    expect(jspiSupported(undefined)).toBe(false);
+    expect(jspiSupported(null)).toBe(false); // not undefined: that is the default, the real WebAssembly (Node in CI has JSPI)
   });
 });
