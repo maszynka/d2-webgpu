@@ -175,4 +175,4 @@ export function jspiSupported(wasm: unknown = typeof WebAssembly === 'object' ? 
 
 /** Why the full game cannot start in this browser. */
 export const NO_JSPI =
-  'This browser has no WebAssembly JSPI, which the full game needs. It runs in Chrome or Edge 137+, Firefox 153+ and Safari 27 (iOS / iPadOS 27); on iOS 26 every browser uses WebKit without it. The asset viewer and maps work here.';
+  'This browser has no WebAssembly JSPI, which the full game needs. On an iPhone or iPad, update to iOS / iPadOS 27 (every browser there uses Safari\'s engine, which has JSPI from 27). Elsewhere: Chrome or Edge 137+, Firefox 153+, Safari 27. The asset viewer and maps work here.';
