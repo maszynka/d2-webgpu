@@ -57,8 +57,12 @@ export class FullGame {
   private readonly mailbox: FrameMailbox;
   private pendingInput: InputRecord[] = [];
   private motion: { x: number; y: number } | null = null;
-  /** SDL button a finger press sends: 1 left, 3 right (the touch controls' RMB toggle) */
+  /** SDL button a finger or pen press sends: 1 left, 3 right (the touch controls' RMB toggle) */
   touchButton = 1;
+  /** modifier flags held by the touch toggles, added to every physical key record */
+  touchMods = 0;
+  /** told when the game released every key (the touch toggles follow) */
+  onBlur: (() => void) | null = null;
   private readonly cleanup: (() => void)[] = [];
   private audio: AudioEngine | null = null;
   private ctlSeq = 0;
@@ -324,9 +328,14 @@ export class FullGame {
       e.preventDefault();
       if (!ours(e)) return;
       c.focus();
-      c.setPointerCapture(e.pointerId);
+      try {
+        c.setPointerCapture(e.pointerId);
+      } catch {
+        return; // the pointer is already gone
+      }
       const p = this.pos(e);
-      const b = e.pointerType === 'touch' ? this.touchButton : sdlButton(e.button);
+      // a finger or a pen tip has one button: the touch controls choose it
+      const b = e.pointerType === 'mouse' ? sdlButton(e.button) : this.touchButton;
       pressed.set(e.pointerId, b);
       this.motion = null;
       this.queue([EV.motion, p.x, p.y, 0, 0, 0]);
@@ -335,8 +344,10 @@ export class FullGame {
     const release = (e: PointerEvent) => {
       e.preventDefault();
       if (!ours(e)) return;
+      // a finger is released once (lostpointercapture may come before its pointerup)
+      if (e.pointerType !== 'mouse' && !pressed.has(e.pointerId)) return;
       const p = this.pos(e);
-      const b = e.pointerType === 'touch' ? (pressed.get(e.pointerId) ?? 1) : sdlButton(e.button);
+      const b = e.pointerType === 'mouse' ? sdlButton(e.button) : (pressed.get(e.pointerId) ?? 1);
       pressed.delete(e.pointerId);
       this.motion = null;
       this.queue([EV.motion, p.x, p.y, 0, 0, 0]);
@@ -356,23 +367,25 @@ export class FullGame {
     on('contextmenu', (e) => e.preventDefault());
     on('keydown', (e) => {
       const sc = scancodeOf(e.code);
-      if (sc) this.queue([EV.key, sc, 1, e.repeat ? 1 : 0, modFlags(e), 0]);
+      if (sc) this.queue([EV.key, sc, 1, e.repeat ? 1 : 0, modFlags(e) | this.touchMods, 0]);
       const cp = textOf(e);
       if (cp !== null) this.queue([EV.text, cp, 0, 0, 0, 0]);
       if (shouldPreventDefault(e)) e.preventDefault();
     });
     on('keyup', (e) => {
       const sc = scancodeOf(e.code);
-      if (sc) this.queue([EV.key, sc, 0, 0, modFlags(e), 0]);
+      if (sc) this.queue([EV.key, sc, 0, 0, modFlags(e) | this.touchMods, 0]);
       if (shouldPreventDefault(e)) e.preventDefault();
     });
     // losing focus must not leave keys or buttons stuck down
     on('blur', () => {
       this.queue([EV.blur, 0, 0, 0, 0, 0]);
+      this.onBlur?.();
       this.flushInput();
     });
     const onHide = () => {
       this.queue([EV.blur, 0, 0, 0, 0, 0]);
+      this.onBlur?.();
       this.flushInput(); // a hidden page gets no animation frames: send now
       this.send({ t: 'flush' });
     };

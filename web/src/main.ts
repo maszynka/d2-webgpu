@@ -481,8 +481,8 @@ async function main(): Promise<void> {
 
   const failCard = $('game-failed');
   const touch = bindTouchControls($('touch'), () => full);
-  // the controls show while the last pointer was a finger; a mouse click hides them again
-  window.addEventListener('pointerdown', (e) => document.body.classList.toggle('touch', e.pointerType === 'touch'), { capture: true });
+  // the controls show while the last pointer was a finger or a pen; a mouse click hides them again
+  window.addEventListener('pointerdown', (e) => document.body.classList.toggle('touch', e.pointerType !== 'mouse'), { capture: true });
   // leaving a running game quits it: the character is saved on quit, but what happened since the last save is gone
   const LEAVE_GAME = 'Leave the game?\n\nThe game will be closed. Progress since your character was last saved will be lost.';
   /** shown and not crashed or quit (before the first frame or after a crash there is nothing to keep) */

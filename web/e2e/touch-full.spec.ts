@@ -61,20 +61,29 @@ test('touch controls drive the game', async ({ page }) => {
   await page.waitForTimeout(100);
   expect(buttons(await take(page))).toEqual([[1, 1], [1, 0]]);
 
-  // Esc, a key from the fold-out, Shift held carries its flag
+  // Esc, a key from the fold-out, Shift held carries its flag into the next key and a physical key; the canvas keeps
+  // the focus throughout (a blur would release every key)
+  const shiftBtn = page.locator('#touch button', { hasText: '⇧' });
   await page.locator('#touch button', { hasText: 'Esc' }).tap();
   await page.locator('#touch button', { hasText: '⋯' }).tap();
   await page.locator('#touch button', { hasText: 'F2' }).tap();
-  await page.locator('#touch button', { hasText: '⇧' }).tap();
-  await page.locator('#touch button', { hasText: '⇧' }).tap();
+  await shiftBtn.tap();
+  await page.locator('#touch button', { hasText: 'F2' }).tap();
+  await page.keyboard.press('KeyI');
+  await shiftBtn.tap();
   await page.waitForTimeout(100);
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe('view');
   const keys = (await take(page)).filter((r) => r[0] === 1).map((r) => [r[1], r[2], r[4]]);
-  expect(keys).toEqual([[41, 1, 0], [41, 0, 0], [59, 1, 0], [59, 0, 0], [225, 1, 1], [225, 0, 0]]);
+  expect(keys).toEqual([[41, 1, 0], [41, 0, 0], [59, 1, 0], [59, 0, 0], [225, 1, 1], [59, 1, 1], [59, 0, 1], [12, 1, 1], [12, 0, 1], [225, 0, 0]]);
+  await page.keyboard.press('KeyI'); // close the inventory again
+  await shiftBtn.tap();
+  await expect(shiftBtn).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: path.join(shots, 'touch-controls.png') });
 
-  // soft keyboard: typed text arrives as text records, Backspace as a key
+  // soft keyboard: the canvas blur releases Shift (button follows); typed text arrives as text records, Backspace as a key
   await page.locator('#touch button', { hasText: 'Abc' }).tap();
   await expect(page.locator('#touch .touch-text')).toBeFocused();
+  await expect(shiftBtn).toHaveAttribute('aria-pressed', 'false');
   await page.keyboard.type('Ab');
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(100);
@@ -82,7 +91,7 @@ test('touch controls drive the game', async ({ page }) => {
   expect(typed).toContainEqual([5, 65, 0]);
   expect(typed).toContainEqual([5, 98, 0]);
   expect(typed).toContainEqual([1, 42, 1]);
-  await expect(page.locator('#touch .touch-text')).toHaveValue('');
+  await expect(page.locator('#touch .touch-text')).toHaveValue('\u200b'); // only the placeholder: the game has the text
 
   // a mouse click hides the column again
   await page.mouse.click(p.x, p.y);
