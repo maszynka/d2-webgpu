@@ -16,10 +16,8 @@ test.beforeEach(async ({ page }) => {
 
 test('welcome card: the JSPI check fails with the reason', async ({ page }) => {
   await page.goto('/');
-  test.skip(!(await page.evaluate(() => 'gpu' in navigator && !!navigator.gpu)), 'WebGPU not available in this headless Chromium');
   await expect(page.locator('#chk-jspi')).toHaveAttribute('data-state', 'fail');
   await expect(page.locator('#chk-jspi .why')).toContainText('no WebAssembly JSPI');
-  await expect(page.locator('#chk-gpu')).toHaveAttribute('data-state', 'ok');
 });
 
 test('real game files: Play explains the missing JSPI, Copy log copies it', async ({ page, context }) => {

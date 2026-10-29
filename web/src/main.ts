@@ -767,6 +767,7 @@ async function main(): Promise<void> {
     }
   };
   $('game-restart').addEventListener('click', () => {
+    if (!jspi) return; // nothing to restart: the reason stays on the card
     hideFailed();
     void (async () => {
       await stopFull();
@@ -777,6 +778,7 @@ async function main(): Promise<void> {
   $('game-demo').addEventListener('click', () => impl.onDemo!());
   $('game-details').addEventListener('click', () => setDebug(true));
   const copyBtn = $<HTMLButtonElement>('game-copylog');
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
   copyBtn.addEventListener('click', () => {
     const text = [
       $('game-failed-reason').textContent ?? '',
@@ -785,14 +787,15 @@ async function main(): Promise<void> {
     ].join('\n');
     const done = (ok: boolean): void => {
       copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
-      setTimeout(() => (copyBtn.textContent = 'Copy log'), 2000);
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => (copyBtn.textContent = 'Copy log'), 2000);
     };
     // the selection copy first: it runs synchronously inside the tap, which iOS WebKit requires; the async API next
     const legacy = (): boolean => {
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.setAttribute('readonly', '');
-      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px'; // under 16 px iOS zooms on focus
       document.body.append(ta);
       ta.select();
       ta.setSelectionRange(0, text.length);
