@@ -35,7 +35,7 @@ import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
 import { MapScene } from './world/tilemap';
-import { jspiSupported, recordTech, type WebGpuStatus } from './analytics/visit';
+import { jspiSupported, NO_JSPI, recordTech, type WebGpuStatus } from './analytics/visit';
 
 /** Page state for tests (window.__d2.ui) */
 export interface UiInfo {
@@ -221,6 +221,8 @@ async function main(): Promise<void> {
 
   const visit = (webgpu: WebGpuStatus, a?: { vendor: string; architecture: string; features: string[] }): void =>
     recordTech({ webgpu, vendor: a?.vendor ?? '', architecture: a?.architecture ?? '', features: a?.features ?? [], jspi: jspiSupported() });
+  const jspi = jspiSupported();
+  welcome.setCheck('jspi', jspi ? 'ok' : 'fail', jspi ? 'WebAssembly JSPI available' : NO_JSPI);
   const noGpu = (reason: string): void => {
     $('nogpu').hidden = false;
     $('nogpu-reason').textContent = reason;
@@ -623,6 +625,10 @@ async function main(): Promise<void> {
       return;
     }
     if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
+    if (!jspi) {
+      showFailed(NO_JSPI);
+      return;
+    }
     panel.closePopovers();
     await pendingStop; // never two workers on IndexedDB at once
     await saveOp; // nor a worker while an import writes IndexedDB (its first sync would drop the imported files)
@@ -770,9 +776,39 @@ async function main(): Promise<void> {
   });
   $('game-demo').addEventListener('click', () => impl.onDemo!());
   $('game-details').addEventListener('click', () => setDebug(true));
-  $('game-copylog').addEventListener('click', () => {
-    const text = (full?.stats.logs ?? []).join('\n');
-    void navigator.clipboard?.writeText(text).catch(() => undefined);
+  const copyBtn = $<HTMLButtonElement>('game-copylog');
+  copyBtn.addEventListener('click', () => {
+    const text = [
+      $('game-failed-reason').textContent ?? '',
+      `${location.origin}${location.pathname} | ${navigator.userAgent} | JSPI ${jspi ? 'yes' : 'no'}`,
+      ...(full?.stats.logs ?? []),
+    ].join('\n');
+    const done = (ok: boolean): void => {
+      copyBtn.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(() => (copyBtn.textContent = 'Copy log'), 2000);
+    };
+    // the selection copy first: it runs synchronously inside the tap, which iOS WebKit requires; the async API next
+    const legacy = (): boolean => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.append(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        /* reported below */
+      }
+      ta.remove();
+      copyBtn.focus();
+      return ok;
+    };
+    if (legacy()) done(true);
+    else if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    else done(false);
   });
 
   void CoreClient.start().then(({ client, status }) => {
