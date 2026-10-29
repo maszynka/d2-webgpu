@@ -140,6 +140,7 @@ export function bindTouchControls(root: HTMLElement, sink: () => TouchSink | nul
     b.addEventListener('mousedown', (e) => e.preventDefault());
     b.addEventListener('click', () => {
       if (document.activeElement === b && before instanceof HTMLElement && before !== b) before.focus({ preventScroll: true });
+      before = null;
     });
     return b;
   };
@@ -218,7 +219,7 @@ export function bindTouchControls(root: HTMLElement, sink: () => TouchSink | nul
   // one zero-width character to delete: some Android keyboards send no Backspace at all in an empty field
   field.addEventListener('focus', seed);
   const kbd = button('Abc', 'Keyboard: type into the game (names, chat)');
-  kbd.setAttribute('aria-label', 'Keyboard');
+  kbd.setAttribute('aria-label', 'Abc keyboard');
   // focus moves inside the click (a user gesture), which iOS needs to open the keyboard
   kbd.addEventListener('click', () => {
     if (document.activeElement === field) field.blur();
