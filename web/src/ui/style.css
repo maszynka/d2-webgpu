@@ -165,3 +165,16 @@ body.playing canvas#view:focus-visible { outline: none; }
 #cmp-thumb:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 /* an overlay card (missing archives, game stopped) hides the divider */
 #stage:has(.overlay:not([hidden])) #cmp-divider { display: none; }
+
+/* touch controls (full/touch.ts): a column at the right edge, more keys folding out to its left */
+#touch { display: none; position: absolute; right: max(6px, env(safe-area-inset-right)); top: 50%; transform: translateY(-50%); z-index: 4;
+  align-items: center; gap: 6px; pointer-events: none; }
+body.playing.touch #touch { display: flex; }
+#touch .touch-col, #touch .touch-more { display: grid; gap: 6px; pointer-events: auto; }
+#touch .touch-more { grid-template-columns: repeat(4, 44px); }
+#touch .touch-more[hidden] { display: none; }
+#touch button { width: 44px; height: 44px; padding: 0; font: 600 14px/1 system-ui, -apple-system, sans-serif; color: var(--fg);
+  background: rgb(12 12 15 / 0.55); border: 1px solid var(--ctl-line); border-radius: 8px; touch-action: manipulation;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+#touch button[aria-pressed="true"] { background: rgb(160 120 40 / 0.75); border-color: rgb(220 180 90); }
+#touch .touch-text { position: absolute; width: 1px; height: 1px; opacity: 0; font-size: 16px; border: 0; padding: 0; pointer-events: none; }

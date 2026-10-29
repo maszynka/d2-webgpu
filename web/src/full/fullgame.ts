@@ -57,6 +57,8 @@ export class FullGame {
   private readonly mailbox: FrameMailbox;
   private pendingInput: InputRecord[] = [];
   private motion: { x: number; y: number } | null = null;
+  /** SDL button a finger press sends: 1 left, 3 right (the touch controls' RMB toggle) */
+  touchButton = 1;
   private readonly cleanup: (() => void)[] = [];
   private audio: AudioEngine | null = null;
   private ctlSeq = 0;
@@ -311,24 +313,34 @@ export class FullGame {
     c.style.cursor = 'none'; // the game draws its own gauntlet cursor
     this.cleanup.push(() => (c.style.cursor = prevCursor));
 
+    // one mouse: a second finger is ignored (a pinch or a palm must not move the cursor or click)
+    const ours = (e: PointerEvent): boolean => e.pointerType !== 'touch' || e.isPrimary;
+    /** the SDL button each pointer pressed, so the release matches it (a touch press follows touchButton) */
+    const pressed = new Map<number, number>();
     on('pointermove', (e) => {
-      this.motion = this.pos(e);
+      if (ours(e)) this.motion = this.pos(e);
     });
     on('pointerdown', (e) => {
+      e.preventDefault();
+      if (!ours(e)) return;
       c.focus();
       c.setPointerCapture(e.pointerId);
       const p = this.pos(e);
+      const b = e.pointerType === 'touch' ? this.touchButton : sdlButton(e.button);
+      pressed.set(e.pointerId, b);
       this.motion = null;
       this.queue([EV.motion, p.x, p.y, 0, 0, 0]);
-      this.queue([EV.button, sdlButton(e.button), 1, p.x, p.y, 0]);
-      e.preventDefault();
+      this.queue([EV.button, b, 1, p.x, p.y, 0]);
     });
     const release = (e: PointerEvent) => {
+      e.preventDefault();
+      if (!ours(e)) return;
       const p = this.pos(e);
+      const b = e.pointerType === 'touch' ? (pressed.get(e.pointerId) ?? 1) : sdlButton(e.button);
+      pressed.delete(e.pointerId);
       this.motion = null;
       this.queue([EV.motion, p.x, p.y, 0, 0, 0]);
-      this.queue([EV.button, sdlButton(e.button), 0, p.x, p.y, 0]);
-      e.preventDefault();
+      this.queue([EV.button, b, 0, p.x, p.y, 0]);
     };
     on('pointerup', release);
     // a cancelled / lost capture must not leave the button held down in the game

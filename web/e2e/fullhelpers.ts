@@ -111,6 +111,8 @@ export async function perfReset(page: Page): Promise<void> {
 
 /** Open the page, hand it the MPQs (hard-linked scratch folder, nothing copied) and press Play. Resolves with seconds to the first frames. */
 export async function openAndPlay(page: Page, only?: RegExp): Promise<number> {
+  // the analytics opt-in card sits over the bottom-left of the game until chosen: choose "nothing" up front
+  await page.addInitScript(() => localStorage.setItem('d2.analytics.consent.v1', JSON.stringify({ tech: false, country: false })));
   await page.goto('/');
   expect(await page.evaluate(() => 'gpu' in navigator && !!navigator.gpu), 'WebGPU').toBe(true);
   await page.waitForFunction(() => window.__d2?.core?.mode === 'wasm', undefined, { timeout: 30_000 });

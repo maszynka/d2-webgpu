@@ -35,6 +35,7 @@ import { Dc6Viewer } from './viewer/dc6view';
 import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
 import { MapScene } from './world/tilemap';
+import { bindTouchControls } from './full/touch';
 import { jspiSupported, NO_JSPI, recordTech, type WebGpuStatus } from './analytics/visit';
 
 /** Page state for tests (window.__d2.ui) */
@@ -479,6 +480,9 @@ async function main(): Promise<void> {
   const palettes = new Map<string, Palette>();
 
   const failCard = $('game-failed');
+  const touch = bindTouchControls($('touch'), () => full);
+  // the controls show while the last pointer was a finger; a mouse click hides them again
+  window.addEventListener('pointerdown', (e) => document.body.classList.toggle('touch', e.pointerType === 'touch'), { capture: true });
   // leaving a running game quits it: the character is saved on quit, but what happened since the last save is gone
   const LEAVE_GAME = 'Leave the game?\n\nThe game will be closed. Progress since your character was last saved will be lost.';
   /** shown and not crashed or quit (before the first frame or after a crash there is nothing to keep) */
@@ -650,6 +654,7 @@ async function main(): Promise<void> {
         });
       },
     });
+    touch.reset();
     state.mode = 'full';
     state.full = full.stats;
     state.fullGame = full;
@@ -668,6 +673,7 @@ async function main(): Promise<void> {
     const g = full;
     if (!g) return;
     full = null;
+    touch.reset();
     delete state.fullGame;
     state.mode = 'demo';
     canvas.style.cursor = '';
