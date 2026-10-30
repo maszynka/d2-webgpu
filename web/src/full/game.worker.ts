@@ -174,7 +174,8 @@ async function start(files: File[], baseUrl: string, extraArgs: string[], viewWi
   post({ t: 'status', text: 'loading Diablo II data (the game is blocked while it loads)...' });
   // yield once so the status message is delivered before main() blocks the worker for a while
   await new Promise((r) => setTimeout(r, 20));
-  // JSPI: main() suspends inside the frame loop, so callMain returns a promise that settles when it exits
+  // JSPI build: main() suspends inside the frame loop, so callMain returns a promise that settles when it exits.
+  // Asyncify build: callMain returns (or throws "unwind") at the first sleep; the loop goes on from timers, onExit ends it.
   const isExit = (e: unknown) => e === 'unwind' || (e instanceof Error && e.name === 'ExitStatus') || (typeof e === 'object' && e !== null && (e as { name?: string }).name === 'ExitStatus');
   try {
     await Promise.resolve(m.callMain(['--data', '/d2', '--no-video', '--widescreen', ...extraArgs]));
@@ -183,10 +184,17 @@ async function start(files: File[], baseUrl: string, extraArgs: string[], viewWi
   }
 }
 
-/** A C++ exception that escaped main() (WebAssembly.Exception) with its what(); anything else as text. */
+/**
+ * A C++ exception that escaped main() with its what(): a WebAssembly.Exception (JSPI build, wasm EH) or Emscripten's
+ * CppException with an excPtr (Asyncify build, JS EH). Anything else as text.
+ */
 function describe(m: D2Module, e: unknown): string {
   try {
-    if (m.getExceptionMessage && typeof WebAssembly !== 'undefined' && (e as object) instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception) {
+    // WebAssembly.Exception is missing where wasm EH is (the browsers that get the Asyncify build): no instanceof then
+    const Exc = typeof WebAssembly === 'object' ? (WebAssembly as unknown as { Exception?: unknown }).Exception : undefined;
+    const wasmExc = typeof Exc === 'function' && (e as object) instanceof (Exc as new () => object);
+    const jsExc = typeof e === 'object' && e !== null && typeof (e as { excPtr?: unknown }).excPtr === 'number';
+    if (m.getExceptionMessage && (wasmExc || jsExc)) {
       const r = m.getExceptionMessage(e);
       return `uncaught C++ exception: ${Array.isArray(r) ? r.join(': ') : r}`;
     }
@@ -239,8 +247,12 @@ function stop(): void {
   }, 4000);
 }
 
-self.addEventListener('error', (e) => post({ t: 'error', message: e.message || 'worker error' }));
-self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: `unhandled: ${String((e as PromiseRejectionEvent).reason)}` }));
+// the Asyncify build's frame loop runs from timers once callMain returned, so its uncaught C++ exceptions land here
+self.addEventListener('error', (e) => post({ t: 'error', message: (mod && e.error !== undefined && e.error !== null ? describe(mod, e.error) : '') || e.message || 'worker error' }));
+self.addEventListener('unhandledrejection', (e) => {
+  const reason: unknown = (e as PromiseRejectionEvent).reason;
+  post({ t: 'error', message: `unhandled: ${mod ? describe(mod, reason) : String(reason)}` });
+});
 
 ctx.onmessage = (e) => {
   const msg = e.data;

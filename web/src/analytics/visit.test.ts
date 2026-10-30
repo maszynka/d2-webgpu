@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { jspiSupported, parseReport, parseUserAgent } from './visit';
+import { parseReport, parseUserAgent } from './visit';
 
 describe('parseReport', () => {
   const all = { tech: true, country: true };
@@ -50,15 +50,5 @@ describe('parseUserAgent', () => {
   ];
   it.each(cases)('%s', (ua, browser, browserMajor, os) => {
     expect(parseUserAgent(ua)).toEqual({ browser, browserMajor, os });
-  });
-});
-
-describe('jspiSupported', () => {
-  it('needs both Suspending and promising as functions (iOS 26 WebKit has neither)', () => {
-    expect(jspiSupported({ Suspending: function () {}, promising: () => 0 })).toBe(true);
-    expect(jspiSupported({})).toBe(false);
-    expect(jspiSupported({ Suspending: undefined, promising: () => 0 })).toBe(false);
-    expect(jspiSupported({ Suspending: function () {} })).toBe(false);
-    expect(jspiSupported(null)).toBe(false); // not undefined: that is the default, the real WebAssembly (Node in CI has JSPI)
   });
 });

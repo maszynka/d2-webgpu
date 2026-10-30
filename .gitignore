@@ -7,3 +7,4 @@ build-*/
 web/public/d2core.*
 .wrangler/
 web/public/d2full.*
+web/public/asyncify/
