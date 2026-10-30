@@ -190,7 +190,9 @@ async function start(files: File[], baseUrl: string, extraArgs: string[], viewWi
  */
 function describe(m: D2Module, e: unknown): string {
   try {
-    const wasmExc = typeof WebAssembly !== 'undefined' && (e as object) instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception;
+    // WebAssembly.Exception is missing where wasm EH is (the browsers that get the Asyncify build): no instanceof then
+    const Exc = typeof WebAssembly === 'object' ? (WebAssembly as unknown as { Exception?: unknown }).Exception : undefined;
+    const wasmExc = typeof Exc === 'function' && (e as object) instanceof (Exc as new () => object);
     const jsExc = typeof e === 'object' && e !== null && typeof (e as { excPtr?: unknown }).excPtr === 'number';
     if (m.getExceptionMessage && (wasmExc || jsExc)) {
       const r = m.getExceptionMessage(e);
