@@ -18,5 +18,5 @@ export function aboutInfo(env: ImportMetaEnv = import.meta.env): AboutInfo {
 
 /** The build line over the game view: commit, its date, and the engine once the game runs (a stale tab shows an old commit). */
 export function versionLabel(info: AboutInfo, engine: string | null = null): string {
-  return [info.commit === 'unknown' ? 'dev build' : info.commit, info.date, engine].filter(Boolean).join(' · ');
+  return [info.commit === 'unknown' ? 'dev build' : info.commit.slice(0, 7), info.date, engine].filter(Boolean).join(' · ');
 }

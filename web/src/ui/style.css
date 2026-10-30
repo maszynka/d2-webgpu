@@ -144,9 +144,10 @@ body.playing canvas#view:focus-visible { outline: none; }
 #debug { position: absolute; top: 8px; right: 8px; z-index: 4; margin: 0; padding: 8px 10px; max-width: 40em; white-space: pre-wrap;
   font: var(--mono); background: rgb(0 0 0 / 0.72); border-radius: var(--radius); pointer-events: none; }
 #debug[hidden] { display: none; }
-/* the build this tab runs (about.ts versionLabel): top middle, where the game draws nothing, clicks pass through */
-#version { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 1px 6px; font: var(--mono); font-size: 10px;
+/* the build this tab runs (about.ts versionLabel): top left, clear of the hovered unit's name and life bar (top middle); clicks pass through */
+#version { position: absolute; top: 4px; left: 6px; z-index: 3; padding: 1px 6px; font: var(--mono); font-size: 10px;
   color: rgb(255 255 255 / 0.55); background: rgb(0 0 0 / 0.35); border-radius: var(--radius); pointer-events: none; white-space: nowrap; }
+#stage.cmp #version { display: none; } /* the compare chips own the top edge */
 :focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
 @media (max-width: 720px) { #brand { display: none; } }
 @media (max-width: 480px) { #bar { gap: 6px; padding: 0 6px; } #bar #pick, #bar #folder-label { max-width: 11em; } }
