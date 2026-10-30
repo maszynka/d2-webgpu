@@ -12,7 +12,8 @@ sha="$(git rev-parse --short HEAD)"
 bash wasm/build.sh
 bash wasm/full/build.sh
 archive="d2-webgpu-${sha}.tar.gz"
-(cd web && VITE_COMMIT="$sha" VITE_SOURCE_URL="/source/${archive}" pnpm build)
+date="$(git log -1 --format=%cs)"
+(cd web && VITE_COMMIT="$sha" VITE_BUILD_DATE="$date" VITE_SOURCE_URL="/source/${archive}" pnpm build)
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 src="$tmp/d2-webgpu-${sha}"; mkdir -p "$src"

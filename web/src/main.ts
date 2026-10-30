@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { aboutInfo } from './about';
+import { aboutInfo, versionLabel } from './about';
 import { ACT1_PALETTE, identityColormap, kindOfPath, selectMpqs, splitMissing } from './assets/mpq';
 import type { Palette } from './core/abi';
 import { CoreClient, type CoreStatus } from './core/loader';
@@ -105,6 +105,7 @@ function showAbout(): void {
   link.textContent = a.sourceUrl;
   if ((/^https?:\/\//.test(a.sourceUrl) && !a.sourceUrl.includes('example.invalid')) || a.sourceUrl.startsWith('/source/')) link.href = a.sourceUrl;
   $('commit').textContent = a.commit;
+  $('version').textContent = versionLabel(a);
 }
 
 function presentLine(p: PresentInfo | null, sharp: number, dpr: number): string {
@@ -652,6 +653,7 @@ async function main(): Promise<void> {
     await saveOp; // nor a worker while an import writes IndexedDB (its first sync would drop the imported files)
     canvas.style.cursor = 'none';
     document.body.classList.add('playing');
+    $('version').textContent = versionLabel(aboutInfo(), choice.engine);
     canvas.setAttribute('aria-label', 'Diablo II');
     const base = new URL(import.meta.env.BASE_URL, document.baseURI);
     full = new FullGame(renderer, canvas, mpqFiles, {
@@ -694,6 +696,7 @@ async function main(): Promise<void> {
     canvas.style.cursor = '';
     canvas.setAttribute('aria-label', 'Scene');
     document.body.classList.remove('playing');
+    $('version').textContent = versionLabel(aboutInfo());
     $('pin-btn').hidden = true;
     panel.setPlaying(false);
     panel.setUiState('ready');

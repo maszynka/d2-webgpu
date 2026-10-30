@@ -1,0 +1,27 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0016: a new game starts with no items' or Battle Orders' share on the maxima. World::enter reuses the last game's Player, so after Save and Exit and a new game in the same session the first stats refresh took the old share off the save's own maxima, and the next save went under 0 and wrapped in its 21 bits (45 max life saved as 4141). devctl's difficulty restart enters with the own maxima too (Fight::own_stats). One concern: save maxima.
+
+--- a/components/game/world.cpp
++++ b/components/game/world.cpp
+@@ -977,6 +977,11 @@
+         actor->character.character_class = entering.character_class; actor->character.name = entering.name;
+         actor->character.appearance = entering.appearance; actor->character.items = entering.items; actor->character.stats = entering.stats; actor->character.panel = entering.panel;
+         actor->character.expansion = entering.expansion; actor->character.header = entering.header; actor->character.merc_items = entering.merc_items;
++        // d2full: the save's maxima are its own (Fight::own_stats takes the items' and Battle Orders' shares off), and
++        // Player stays from the last game: without this the next refresh took the old shares off the new maxima,
++        // and the save went under 0 and wrapped (21 bits: 45 max life saved as 4141 after Save and Exit, re-enter).
++        actor->item_max = {};
++        actor->bo_life = actor->bo_mana = 0;
+         // A new game starts at full life, mana and stamina, whatever the
+         // save held (D2's "save and exit to heal").
+         static constexpr std::pair<d2d::d2s::StatId, d2d::d2s::StatId> kRefill[] = {
+--- a/apps/d2d/devctl_verbs.hpp
++++ b/apps/d2d/devctl_verbs.hpp
+@@ -473,6 +473,7 @@
+             // the difficulty (set_map_seed: LvlMaze Rooms(N) / (H)), the World
+             // entered with its own character (items, stats) in the act's town.
+             static_cast<Character&>(town.character) = town.hero.character;
++            town.character.stats = town.world.fight.own_stats();   // d2full: its own maxima, as a save holds them (World::take_character)
+             if (scene) set_map_seed(*scene, scene->map_seed, difficulty);
+             town.enter();
+             return std::string("ok\n");
