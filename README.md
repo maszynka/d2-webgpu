@@ -14,8 +14,12 @@ Diablo II: Lord of Destruction running in a browser tab: the open-source engine 
 
 * A legally owned **Diablo II + Lord of Destruction** installation (patch 1.14d is what the engine targets; 1.13c data
   also load, with warnings).
-* A browser with **WebGPU**. The full game also needs **JSPI** (WebAssembly JavaScript Promise Integration), currently
-  Chromium-based browsers (Chrome, Edge) 137 or newer. The asset viewer and map modes need WebGPU only.
+* A browser with **WebGPU**. The full game runs on a build that uses **JSPI** (WebAssembly JavaScript Promise
+  Integration: Chrome / Edge 137+, Firefox 153+, Safari 27) and, where JSPI is missing (iOS / iPadOS 26, older
+  browsers), on an Asyncify build: a larger download (7.7 MB instead of 4.8 MB) and somewhat slower. On loading, the
+  page tests in a worker what the game needs (JSPI, wasm exceptions, about 768 MiB of WebAssembly memory) and picks the
+  build; the welcome card shows the result. `?engine=jspi` or `?engine=asyncify` forces one. The asset viewer and map
+  modes need WebGPU only.
 * There is no WebGL fallback: every presentation shader is WGSL and one upscaler uses compute shaders.
 
 ## Using it
@@ -29,7 +33,7 @@ Diablo II: Lord of Destruction running in a browser tab: the open-source engine 
 
 On a tablet or phone a tap is a left click, and a column of buttons at the right edge gives the rest: Esc, a sticky
 right button, held Shift and Alt, a keyboard for names and chat, and (behind ⋯) the panel, skill and belt keys. Tap the
-top edge for the bar. iPhone and iPad need iOS / iPadOS 27 (JSPI).
+top edge for the bar. On iOS / iPadOS 26 the game uses the Asyncify build (see Requirements).
 
 Saves live in the browser's IndexedDB for that site. **⚙ Tools → Saves** downloads a backup (a ZIP of every character
 and the game settings) and imports one; it also takes `.d2s` characters from the original game (1.09 to 1.14d, with
