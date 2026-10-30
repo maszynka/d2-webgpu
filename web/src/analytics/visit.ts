@@ -167,9 +167,3 @@ export function getConsent(): Consent | null {
   return currentConsent();
 }
 
-/** WebAssembly JSPI (reported with a visit; the game itself picks its build from the worker probe, full/probe.ts). */
-export function jspiSupported(wasm: unknown = typeof WebAssembly === 'object' ? WebAssembly : undefined): boolean {
-  const w = wasm as { Suspending?: unknown; promising?: unknown } | undefined;
-  return typeof w?.Suspending === 'function' && typeof w.promising === 'function';
-}
-

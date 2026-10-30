@@ -54,10 +54,21 @@ describe('chooseEngine', () => {
   it('blocks on too little memory, no FileReaderSync or a dead worker', () => {
     expect(chooseEngine({ ...good, memoryMiB: 512 }).blocker).toContain('512 MiB');
     expect(chooseEngine({ ...good, fileReaderSync: false }).blocker).toContain('FileReaderSync');
-    const dead = chooseEngine({ ...good, jspi: 'not run', eh: 'not run', memoryMiB: 0, fileReaderSync: false, worker: 'no answer in 10 s' });
+    const dead = chooseEngine({ ...good, jspi: 'not run', eh: 'not run', memoryMiB: 0, fileReaderSync: false, worker: 'probe threw: x' });
     expect(dead.engine).toBeNull();
-    expect(dead.blocker).toContain('no answer in 10 s');
+    expect(dead.blocker).toContain('probe threw: x');
     expect(dead.blocker).not.toContain('FileReaderSync');
+  });
+  it('memory between the Act 1 minimum and the target only warns', () => {
+    const c = chooseEngine({ ...good, memoryMiB: 640 });
+    expect(c).toMatchObject({ engine: 'jspi', blocker: null });
+    expect(c.detail).toContain('stopped at 640 MiB');
+  });
+  it('a probe that timed out falls back to Asyncify instead of blocking', () => {
+    const slow: ProbeReport = { jspi: 'not run', eh: 'not run', memoryMiB: 0, fileReaderSync: false, indexedDB: false, worker: 'gave no answer in 20 s', timedOut: true };
+    expect(chooseEngine(slow)).toMatchObject({ engine: 'asyncify', blocker: null });
+    expect(chooseEngine(slow, 'jspi').engine).toBeNull();
+    expect(describeProbe(slow, 'asyncify')).toContain('engine asyncify (probe timed out)');
   });
   it('no IndexedDB only warns', () => {
     expect(chooseEngine({ ...good, indexedDB: false })).toMatchObject({ engine: 'jspi', blocker: null });

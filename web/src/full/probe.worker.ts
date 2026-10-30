@@ -8,5 +8,8 @@ onmessage = (e: MessageEvent<{ hideJspi?: boolean }>) => {
     delete (WebAssembly as { Suspending?: unknown }).Suspending;
     delete (WebAssembly as { promising?: unknown }).promising;
   }
-  void runProbe().then((r) => postMessage(r));
+  runProbe().then(
+    (r) => postMessage(r),
+    (e: unknown) => postMessage({ jspi: 'not run', eh: 'not run', memoryMiB: 0, fileReaderSync: false, indexedDB: false, worker: `probe threw: ${String(e)}` }),
+  );
 };

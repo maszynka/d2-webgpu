@@ -36,7 +36,7 @@ import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
 import { MapScene } from './world/tilemap';
 import { bindTouchControls } from './full/touch';
-import { jspiSupported, recordTech, type WebGpuStatus } from './analytics/visit';
+import { recordTech, type WebGpuStatus } from './analytics/visit';
 import { chooseEngine, describeProbe, probeInWorker, type EngineChoice, type ProbeReport } from './full/probe';
 
 /** Page state for tests (window.__d2.ui) */
@@ -221,8 +221,11 @@ async function main(): Promise<void> {
   });
   if (params.get('bar') === 'pinned') bar.setPinned(true);
 
+  // JSPI as the probe saw it run (a property check said yes on iPadOS 26)
   const visit = (webgpu: WebGpuStatus, a?: { vendor: string; architecture: string; features: string[] }): void =>
-    recordTech({ webgpu, vendor: a?.vendor ?? '', architecture: a?.architecture ?? '', features: a?.features ?? [], jspi: jspiSupported() });
+    void probing.then(() =>
+      recordTech({ webgpu, vendor: a?.vendor ?? '', architecture: a?.architecture ?? '', features: a?.features ?? [], jspi: probe?.jspi === 'ok' }),
+    );
   // what the game's worker can really do here (feature flags alone said yes on iPadOS 26, and the game failed)
   let probe: ProbeReport | null = null;
   let engine: EngineChoice | null = null;

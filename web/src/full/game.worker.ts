@@ -184,10 +184,15 @@ async function start(files: File[], baseUrl: string, extraArgs: string[], viewWi
   }
 }
 
-/** A C++ exception that escaped main() (WebAssembly.Exception) with its what(); anything else as text. */
+/**
+ * A C++ exception that escaped main() with its what(): a WebAssembly.Exception (JSPI build, wasm EH) or Emscripten's
+ * CppException with an excPtr (Asyncify build, JS EH). Anything else as text.
+ */
 function describe(m: D2Module, e: unknown): string {
   try {
-    if (m.getExceptionMessage && typeof WebAssembly !== 'undefined' && (e as object) instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception) {
+    const wasmExc = typeof WebAssembly !== 'undefined' && (e as object) instanceof (WebAssembly as unknown as { Exception: new () => object }).Exception;
+    const jsExc = typeof e === 'object' && e !== null && typeof (e as { excPtr?: unknown }).excPtr === 'number';
+    if (m.getExceptionMessage && (wasmExc || jsExc)) {
       const r = m.getExceptionMessage(e);
       return `uncaught C++ exception: ${Array.isArray(r) ? r.join(': ') : r}`;
     }
@@ -240,8 +245,12 @@ function stop(): void {
   }, 4000);
 }
 
-self.addEventListener('error', (e) => post({ t: 'error', message: e.message || 'worker error' }));
-self.addEventListener('unhandledrejection', (e) => post({ t: 'error', message: `unhandled: ${String((e as PromiseRejectionEvent).reason)}` }));
+// the Asyncify build's frame loop runs from timers once callMain returned, so its uncaught C++ exceptions land here
+self.addEventListener('error', (e) => post({ t: 'error', message: mod && e.error !== undefined && e.error !== null ? describe(mod, e.error) : e.message || 'worker error' }));
+self.addEventListener('unhandledrejection', (e) => {
+  const reason: unknown = (e as PromiseRejectionEvent).reason;
+  post({ t: 'error', message: `unhandled: ${mod ? describe(mod, reason) : String(reason)}` });
+});
 
 ctx.onmessage = (e) => {
   const msg = e.data;
