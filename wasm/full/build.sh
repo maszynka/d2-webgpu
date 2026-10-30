@@ -27,14 +27,14 @@ variant() {
   ls -l "$dest"/d2full.js "$dest"/d2full.wasm
 }
 
-case "${D2FULL_ASYNC:-both}" in jspi | asyncify | both) ;; *) echo "D2FULL_ASYNC must be jspi or asyncify, got '$D2FULL_ASYNC'" >&2; exit 1 ;; esac
+case "${D2FULL_ASYNC:-both}" in jspi | asyncify | both) ;; *) echo "D2FULL_ASYNC must be jspi, asyncify or both, got '$D2FULL_ASYNC'" >&2; exit 1 ;; esac
 # D2FULL_NOCOPY: build without touching web/public
 copy() { [ -n "${D2FULL_NOCOPY:-}" ] || echo "$1"; }
 
 # D2FULL_BUILD + D2FULL_NOCOPY: a scratch variant, e.g. D2FULL_ASYNC=asyncify D2FULL_BUILD=build-full/x D2FULL_NOCOPY=1
 if [ -n "${D2FULL_BUILD:-}" ]; then
   [ "${D2FULL_ASYNC:-jspi}" != both ] || { echo "D2FULL_BUILD builds one variant: set D2FULL_ASYNC" >&2; exit 1; }
-  variant "${D2FULL_ASYNC:-jspi}" "$D2FULL_BUILD" "$(copy web/public)"
+  variant "${D2FULL_ASYNC:-jspi}" "$D2FULL_BUILD" "$(copy "web/public$([ "${D2FULL_ASYNC:-jspi}" = jspi ] || echo /asyncify)")"
   exit 0
 fi
 [ "${D2FULL_ASYNC:-both}" = asyncify ] || variant jspi build-full/build "$(copy web/public)"

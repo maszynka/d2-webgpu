@@ -248,7 +248,7 @@ function stop(): void {
 }
 
 // the Asyncify build's frame loop runs from timers once callMain returned, so its uncaught C++ exceptions land here
-self.addEventListener('error', (e) => post({ t: 'error', message: mod && e.error !== undefined && e.error !== null ? describe(mod, e.error) : e.message || 'worker error' }));
+self.addEventListener('error', (e) => post({ t: 'error', message: (mod && e.error !== undefined && e.error !== null ? describe(mod, e.error) : '') || e.message || 'worker error' }));
 self.addEventListener('unhandledrejection', (e) => {
   const reason: unknown = (e as PromiseRejectionEvent).reason;
   post({ t: 'error', message: `unhandled: ${mod ? describe(mod, reason) : String(reason)}` });

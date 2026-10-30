@@ -150,7 +150,7 @@ export function chooseEngine(r: ProbeReport, force: Engine | null = null): Engin
     (r.indexedDB ? '' : '; no IndexedDB in workers: characters will not be saved') +
     (r.memoryMiB < MEMORY_NEEDED_MIB ? `; WebAssembly memory stopped at ${r.memoryMiB} MiB: later areas may run out` : '');
   if (blockers.length) return { engine: null, detail: blockers.join('; '), blocker: `The full game cannot start in this browser: ${blockers.join('; ')}.` };
-  if (engine === 'jspi') return { engine, detail: `JSPI build${force ? ' (forced)' : ''}, ${r.memoryMiB} MiB memory ok${warn}`, blocker: null };
+  if (engine === 'jspi') return { engine, detail: `JSPI build${force ? ' (forced)' : ''}, ${r.memoryMiB} MiB memory available${warn}`, blocker: null };
   const why = force ? 'forced by ?engine=asyncify' : r.jspi !== 'ok' ? `JSPI ${r.jspi}` : `wasm exceptions ${r.eh}`;
   return {
     engine,
