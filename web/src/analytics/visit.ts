@@ -167,12 +167,9 @@ export function getConsent(): Consent | null {
   return currentConsent();
 }
 
-/** WebAssembly JSPI, which the full game needs (the Emscripten glue calls `new WebAssembly.Suspending` and `promising`). */
+/** WebAssembly JSPI (reported with a visit; the game itself picks its build from the worker probe, full/probe.ts). */
 export function jspiSupported(wasm: unknown = typeof WebAssembly === 'object' ? WebAssembly : undefined): boolean {
   const w = wasm as { Suspending?: unknown; promising?: unknown } | undefined;
   return typeof w?.Suspending === 'function' && typeof w.promising === 'function';
 }
 
-/** Why the full game cannot start in this browser. */
-export const NO_JSPI =
-  'This browser has no WebAssembly JSPI, which the full game needs. On an iPhone or iPad, update to iOS / iPadOS 27 (every browser there uses Safari\'s engine, which has JSPI from 27). Elsewhere: Chrome or Edge 137+, Firefox 153+, Safari 27. The asset viewer and maps work here.';

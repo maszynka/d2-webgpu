@@ -174,7 +174,8 @@ async function start(files: File[], baseUrl: string, extraArgs: string[], viewWi
   post({ t: 'status', text: 'loading Diablo II data (the game is blocked while it loads)...' });
   // yield once so the status message is delivered before main() blocks the worker for a while
   await new Promise((r) => setTimeout(r, 20));
-  // JSPI: main() suspends inside the frame loop, so callMain returns a promise that settles when it exits
+  // JSPI build: main() suspends inside the frame loop, so callMain returns a promise that settles when it exits.
+  // Asyncify build: callMain returns (or throws "unwind") at the first sleep; the loop goes on from timers, onExit ends it.
   const isExit = (e: unknown) => e === 'unwind' || (e instanceof Error && e.name === 'ExitStatus') || (typeof e === 'object' && e !== null && (e as { name?: string }).name === 'ExitStatus');
   try {
     await Promise.resolve(m.callMain(['--data', '/d2', '--no-video', '--widescreen', ...extraArgs]));

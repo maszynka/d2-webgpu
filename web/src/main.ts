@@ -36,7 +36,8 @@ import { Camera } from './world/camera';
 import { loadMapData } from './world/loadmap';
 import { MapScene } from './world/tilemap';
 import { bindTouchControls } from './full/touch';
-import { jspiSupported, NO_JSPI, recordTech, type WebGpuStatus } from './analytics/visit';
+import { jspiSupported, recordTech, type WebGpuStatus } from './analytics/visit';
+import { chooseEngine, describeProbe, probeInWorker, type EngineChoice, type ProbeReport } from './full/probe';
 
 /** Page state for tests (window.__d2.ui) */
 export interface UiInfo {
@@ -222,8 +223,17 @@ async function main(): Promise<void> {
 
   const visit = (webgpu: WebGpuStatus, a?: { vendor: string; architecture: string; features: string[] }): void =>
     recordTech({ webgpu, vendor: a?.vendor ?? '', architecture: a?.architecture ?? '', features: a?.features ?? [], jspi: jspiSupported() });
-  const jspi = jspiSupported();
-  welcome.setCheck('jspi', jspi ? 'ok' : 'fail', jspi ? 'WebAssembly JSPI available' : NO_JSPI);
+  // what the game's worker can really do here (feature flags alone said yes on iPadOS 26, and the game failed)
+  let probe: ProbeReport | null = null;
+  let engine: EngineChoice | null = null;
+  const forced = params.get('engine');
+  const probing = probeInWorker(params.get('nojspi') === '1').then((r) => {
+    probe = r;
+    engine = chooseEngine(r, forced === 'jspi' || forced === 'asyncify' ? forced : null);
+    welcome.setCheck('jspi', engine.engine ? 'ok' : 'fail', engine.detail);
+    console.info(describeProbe(r, engine.engine));
+    return engine;
+  });
   const noGpu = (reason: string): void => {
     $('nogpu').hidden = false;
     $('nogpu-reason').textContent = reason;
@@ -629,8 +639,9 @@ async function main(): Promise<void> {
       return;
     }
     if (mpqFiles.length === 0) throw new Error('Pick the game folder first.');
-    if (!jspi) {
-      showFailed(NO_JSPI);
+    const choice = engine ?? (await probing);
+    if (!choice.engine) {
+      showFailed(choice.blocker ?? 'The full game cannot start in this browser.');
       return;
     }
     panel.closePopovers();
@@ -639,6 +650,7 @@ async function main(): Promise<void> {
     canvas.style.cursor = 'none';
     document.body.classList.add('playing');
     canvas.setAttribute('aria-label', 'Diablo II');
+    const base = new URL(import.meta.env.BASE_URL, document.baseURI);
     full = new FullGame(renderer, canvas, mpqFiles, {
       onStatus: (text, error) => panel.setStatus(`Game: ${text}`, error),
       onLog: (line) => console.debug('[d2]', line),
@@ -653,7 +665,7 @@ async function main(): Promise<void> {
           panel.setStatus('Game exited.');
         });
       },
-    });
+    }, new URL(choice.engine === 'asyncify' ? 'asyncify/' : './', base).href);
     touch.reset();
     state.mode = 'full';
     state.full = full.stats;
@@ -773,7 +785,7 @@ async function main(): Promise<void> {
     }
   };
   $('game-restart').addEventListener('click', () => {
-    if (!jspi) return; // nothing to restart: the reason stays on the card
+    if (engine && !engine.engine) return; // nothing to restart: the reason stays on the card
     hideFailed();
     void (async () => {
       await stopFull();
@@ -788,7 +800,8 @@ async function main(): Promise<void> {
   copyBtn.addEventListener('click', () => {
     const text = [
       $('game-failed-reason').textContent ?? '',
-      `${location.origin}${location.pathname} | ${navigator.userAgent} | JSPI ${jspi ? 'yes' : 'no'}`,
+      `${location.origin}${location.pathname} | ${navigator.userAgent}`,
+      describeProbe(probe, engine?.engine ?? null),
       ...(full?.stats.logs ?? []),
     ].join('\n');
     const done = (ok: boolean): void => {
