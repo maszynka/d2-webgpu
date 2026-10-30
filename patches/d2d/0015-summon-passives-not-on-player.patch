@@ -1,0 +1,24 @@
+SPDX-License-Identifier: GPL-3.0-or-later
+d2full 0015: passive_stats() skips summoning skills (a summon row, or Revive). Their passivestats are the pet's (Fight's pet set-up applies them, FUN_005c4470), but the player got them too: one point in Skeleton Mastery gave a Necromancer with Raise Skeleton +2048 max life (maxhp is 256ths there), golems added run speed, Oak Sage / Heart of Wolverine / Spirit of Barbs 100% poison resist. game.exe puts passive stats on the player only from skills with a passivestate (FUN_00646f20); none of these has one. One concern: player passives.
+
+--- a/components/rules/skills.hpp
++++ b/components/rules/skills.hpp
+@@ -711,7 +711,7 @@
+ struct PassiveStat { int stat = -1, value = 0; std::string itype; };
+ 
+ // Every skill with passive stats the player has a level in (env.level >
+-// 0), its stats up to the first empty passivestat: the passives, and the
++// 0), but a summoner's (its pet's, below), its stats up to the first empty passivestat: the passives, and the
+ // Paladin's auras — theirs sit in the passivestate while the aura is off
+ // (the state at +0x80 holds FUN_00646d60 off) and in the aura's own state
+ // while it's on (FUN_005cf3a0 fills it from +0x98), so they're always on.
+@@ -719,6 +719,9 @@
+     std::vector<PassiveStat> out;
+     for (const auto& skill : skill_tables.rows) {
+         if (skill.id < 0 || skill.passive_stat[0] < 0 || !env.level) continue;
++        // d2full: a summoning skill's passive stats are its pet's (FUN_005c4470: Raise Skeleton's maxhp from
++        // Skeleton Mastery, the golems' speed, the spirits' resists), never the player's
++        if (!skill.summon.empty() || skill.srvdofunc == ServerDoFunction::kRevive) continue;
+         const int lvl = env.level(skill.id);
+         if (lvl < 1) continue;
+         for (std::size_t k = 0; k < 5 && skill.passive_stat[k] >= 0; ++k)
